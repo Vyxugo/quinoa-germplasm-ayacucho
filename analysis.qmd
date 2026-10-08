@@ -1,5 +1,5 @@
 ---
-# title: "Manuscript Analysis"
+title: "Diversidad agromorfológica de Chenopodium quinoa Willd. en condiciones altoandinas de Ayacucho, Perú "
 format:
   html:
     toc: true
@@ -19,109 +19,584 @@ execute:
 
 # Project Setup
 
-```{r}
+```{r, echo=FALSE}
 #| label: setup
-
+library(factoextra)
+library(FactoMineR)
+library(vegan)
+library(dplyr)
+library(purrr)
+library(writexl) 
+library(cluster)
+library(pvclust)
+library(lme4)
+library(psych)
+library(plotly)
+library(corrplot)
+library(htmlwidgets)
 source('https://inkaverse.com/setup.r')
+
 ```
 
 # Data import
 
-```{r}
-gs <- "url" %>% 
+```{r, echo=FALSE}
+gs <- "https://docs.google.com/spreadsheets/d/14QZQZCEdy0XHK6dqiWQOjy-tU769x_KRhZ-7OyU9phw/edit?gid=1912323931#gid=1912323931" %>% 
   as_sheets_id()
 
-fb <- gs %>% 
+date <- gs %>% 
   range_read(ss = .,sheet = "fb")
-```
-
-# Research Objectives
-
-> https://docs.google.com/spreadsheets/d/1u6xgTT8jDFkHSMkK1iRrNVR-1iOINQidbEiaDCu2Nqw/edit?gid=504037395#gid=504037395
-
-## RO 1
-
-```{r}
 
 ```
 
-## RO 2
+```{r, echo=FALSE}
+ info <- gs %>% 
+  range_read(ss = .,sheet ="dictionary")
 
-```{r}
+info <- info |>
+  dplyr::mutate(valor = vapply(valor,
+                               \(x) if (length(x) == 0) NA_character_ else as.character(x[1]),
+                               character(1)))
+
+dic <- info |>
+  dplyr::filter(tipo == "cualitativo", !is.na(valor),
+                !is.na(categoria_en), categoria_en != "")
+
+
+# date fb 
+
+fb <- date
+
+for (cod in unique(dic$codigo)) {
+  d  <- dic |> dplyr::filter(codigo == cod)
+  lk <- setNames(d$categoria_en, d$valor)
+  fb[[cod]] <- dplyr::coalesce(unname(lk[fb[[cod]]]), fb[[cod]])
+}
+
+mapa <- info |>
+  dplyr::distinct(codigo, Acronym) |>
+  dplyr::filter(codigo %in% names(fb))
+
+fb <- fb |>
+  dplyr::rename(dplyr::any_of(setNames(mapa$codigo, mapa$Acronym)))
+
+fb %>% web_table(scrolly = "400px")
 
 ```
 
-# Multivariate
+# Objective 1
+## qualitative
+```{r, echo=FALSE}
 
-```{r}
-#| eval: false
+#  detector incoherence 
+dif <- fb |>
+  dplyr::rename(block = Block, geno = Trat) |>
+  dplyr::select(geno, block, PLD:GS, -dplyr::all_of(c("LOD", "NPB", "NLT", "PTL", "MLL", "MLW", "SYP", "PH", "SD", "PLr", "PDr", "GD", "TSW" ))) |>
+  tidyr::pivot_longer(-c(geno, block), names_to = "variable", values_to = "valor") |>
+  tidyr::pivot_wider(names_from = block, values_from = valor, names_prefix = "Rep_") |>
+  dplyr::filter(Rep_I != Rep_II | is.na(Rep_I) != is.na(Rep_II))
 
-library(FactoMineR)
-library(factoextra)
+# categorical accessions 
+quali <- fb |>
+  dplyr::rename(block = Block, sub_block = `Sub-block`, Ac = `Ac-`, geno = Trat) |>
+  dplyr::select(-dplyr::all_of(c("LOD", "NPB", "NLT", "PTL", "MLL", "MLW", "SYP", "PH", "SD", "PLr", "PDr", "GD", "TSW"))) |>
+  dplyr::arrange(geno, block) |>
+  dplyr::distinct(geno, .keep_all = TRUE) |>
+  dplyr::select(-Plot, -block, -sub_block, -rows, -cols, -Ac) |>
+  dplyr::mutate(dplyr::across(-c(geno), as.factor))
 
-dtx <- fb %>% 
-  dplyr::select(!c("var1", "var2")) %>% 
-  as.data.frame()
-# str(dtx)
+quali %>% web_table(scrolly = "400px")
+
+```
+
+# Objective 2
+## Analysis Quantitative 
+
+```{r, echo=FALSE}
+
+
+quanti <- fb |> dplyr::rename(
+    block     = Block,
+    sub_block = `Sub-block`,
+    Ac        = `Ac-`,
+    geno      = Trat ) |> dplyr::select(
+    1:Ac, LOD, NPB, NLT, PTL, MLL, MLW, SYP, PH, SD, PLr, PDr, GD, TSW ) |>
+    dplyr::mutate(
+    dplyr::across(1:Ac, as.factor),          
+    dplyr::across(-(1:Ac), as.numeric)       
+  )
+
+exp <- quanti
+str(exp)
+Boxplot(exp$LOD)
+Boxplot(exp$NPB)
+Boxplot(exp$NLT)
+Boxplot(exp$PTL)
+Boxplot(exp$MLL)
+Boxplot(exp$MLW)
+Boxplot(exp$SYP)
+Boxplot(exp$PH)
+Boxplot(exp$SD)
+Boxplot(exp$PLr)
+Boxplot(exp$PDr)
+Boxplot(exp$GD)
+Boxplot(exp$TSW)
+```
+
+```{r, echo=FALSE}
+rslt <- 8:length(exp) %>% map(\(x) {
   
-mv <- dtx %>% 
-  PCA(scale.unit = T
-      , graph = F
-      , quali.sup = c(1, 2))
+trait <- names(exp)[x]
 
-var <- mv %>% 
-  plot.PCA(choix = c("var"), cex=0.7)
+exp %>% 
+   tidyr::drop_na(all_of(trait))%>% 
+  H2cal(trait = trait
+    , gen.name = "geno"
+    , rep.n = 2
+    , fixed.model = ~ 0 + (1|block) + (1|sub_block)  + geno
+    , random.model = ~ 1 + (1|block) + (1|sub_block) + (1|geno)
+    , summary = TRUE
+    , emmeans = FALSE 
+    , plot_diag = TRUE
+    , outliers.rm = FALSE
+    )
 
-cos <- mv %>% 
-  fviz_pca_var(col.var = "cos2"
-               , gradient.cols = inti:::paleta()
-               , repel = TRUE
-               , labelsize = 2)
+})
+tabsmr <- 1:length(rslt) %>% map(\(x) {
+      rslt[[x]][["tabsmr"]] 
+      }) %>% 
+  bind_rows()
 
-ind <- mv %>% 
-  plot.PCA(choix = c("ind")
-           , cex = 0.7
-           , label = "ind"
-           , invisible = "quali"
-           , col.hab = inti:::paleta()
-           , habillage = "none"
-           )
+blues <- 1:length(rslt) %>% map(\(x) {
+      rslt[[x]][["blues"]] %>% dplyr::select(!matches("smith.w"))
+      }) %>% Reduce(function(...) merge(..., all = TRUE
+                                        , by = c('geno')), .)
 
-pcainfo <- factoextra::get_pca(mv); pcainfo
+blups <- 1:length(rslt) %>% map(\(x) {
+      rslt[[x]][["blups"]] %>% dplyr::select(!matches("smith.w"))
+      }) %>% Reduce(function(...) merge(..., all = TRUE
+                                        , by = c('geno')), .)
 
-pcainfo$cor %>% kable(caption = "Variable correlations")
-pcainfo$contrib %>% kable(caption = "Variable Contribution")
-pcainfo$cos2 %>% kable(caption = "Variable Cos2")
+tabsmr %>% web_table(scrolly = "400px")
+# writexl::write_xlsx(tabsmr, "files/STable-4.xlsx")
 
-cls <- mv %>% HCPC(nb.clust = -1, graph = FALSE)
-
-map <- \() {plot.HCPC(cls, choice = "map", draw.tree = FALSE)}
-
-cls$data.clust # Cluster membership of each individual
-cls$desc.var$quanti # Quantitative variables characterizing each cluster
-cls$desc.var$category # Categorical variables significantly by cluster 
-table(cls$data.clust$clust) # Number of individuals assigned to each cluster
-
-plot <- list(var, cos, ind, map) %>% 
-  plot_grid(plotlist = ., ncol = 2, labels = "auto") %>% 
-  ggsave(plot = ., "manuscript/multivariate.jpg", units = "cm"
-                , width = 30, height = 30)
-
-plot %>% include_graphics()
 ```
 
-# References
+### Multivariate Analysis using BLUEs
 
-Broman, K. W., & Woo, K. H. (2017). Data organization in spreadsheets. The American Statistician, 72(1), 2–10. https://doi.org/10.1080/00031305.2017.1375989
+```{r, echo=FALSE}
 
-Zuur, A. F., Ieno, E. N., & Elphick, C. S. (2009). A protocol for data exploration to avoid common statistical problems. Methods in Ecology and Evolution, 1(1), 3–14. https://doi.org/10.1111/j.2041-210x.2009.00001.x
+acc <- blues
 
-Francoishusson. (2017, July 13). PCA course using FactoMineR | R-bloggers. R-bloggers. https://www.r-bloggers.com/2017/07/pca-course-using-factominer/
+pca_vars <- acc %>%
+  dplyr::select(-geno) %>%
+  dplyr::select(where(is.numeric)) %>%
+  names()
 
-Kozak, M., & Piepho, H. (2017). What’s normal anyway? Residual plots are more telling than significance tests when checking ANOVA assumptions. Journal of Agronomy and Crop Science, 204(1), 86–98. https://doi.org/10.1111/jac.12220
+# 3. PCA using the 78 accessions
 
-Tanaka, E., & Hui, F. K. C. (2019). Symbolic formulae for linear mixed models. In Communications in computer and information science (pp. 3–21). https://doi.org/10.1007/978-981-15-1960-4_1
+pca_data <- acc %>%
+  dplyr::select(
+    geno,
+    dplyr::all_of(pca_vars)
+  )
 
-Schielzeth, H., Dingemanse, N. J., Nakagawa, S., Westneat, D. F., Allegue, H., Teplitsky, C., Réale, D., Dochtermann, N. A., Garamszegi, L. Z., & Araya‐Ajoy, Y. G. (2020). Robustness of linear mixed‐effects models to violations of distributional assumptions. Methods in Ecology and Evolution, 11(9), 1141–1152. https://doi.org/10.1111/2041-210x.13434
+rownames(pca_data) <- pca_data$geno
 
-Jambor, H. K. (2025). A checklist for designing and improving the visualization of scientific data. Nature Cell Biology, 27(6), 879–883. https://doi.org/10.1038/s41556-025-01684-z
+pca_data <- pca_data %>%
+  dplyr::select(-geno)
+
+mv <- FactoMineR::PCA(
+  pca_data,
+  scale.unit = TRUE,
+  graph = FALSE
+)
+
+pcainfo <- factoextra::get_pca(mv)
+
+pcainfo
+
+# Variable correlations
+
+pcainfo$cor %>%knitr::kable(caption = "Variable correlations" )
+
+# Variable contributions
+
+pcainfo$contrib %>% knitr::kable( caption = "Variable contribution")
+# Variable cos2
+
+pcainfo$cos2 %>% knitr::kable( caption = "Variable cos2")
+
+pcavar <- mv %>% plot.PCA(
+    choix = "var",
+    title = "",
+    autoLab = "y",
+    cex = 0.8,
+    shadowtext = TRUE
+  )
+
+pcaind <- mv %>%
+  plot.PCA(
+    choix = "ind",
+    habillage =2,
+    title = "",
+    autoLab = "y",
+    cex = 0.8,
+    shadowtext = TRUE,
+    label = "ind"
+  )
+
+
+list( pcavar, pcaind) %>%
+  plot_grid(  plotlist = ., nrow = 1, labels = "AUTO",
+              rel_heights = c(1, 1.1)
+  )
+
+```
+
+### Cluster validation 
+
+```{r, echo=FALSE}
+
+# 1. PCA coordinates of the 78 accessions
+
+datos.pca <- mv$ind$coord
+
+d_pca <- stats::dist(datos.pca)
+
+hc_w <- stats::hclust(
+  d_pca,
+  method = "ward.D2"
+)
+
+
+# 2. WSS / Elbow method
+
+p_wss <- factoextra::fviz_nbclust(
+  datos.pca,
+  hcut,
+  method = "wss",
+  k.max = 10
+)
+
+p_wss
+
+wss_k <- p_wss$data
+
+x <- as.numeric(as.character(wss_k$clusters))
+y <- wss_k$y
+
+d_line <- abs(
+  (y[length(y)] - y[1]) * x -
+    (x[length(x)] - x[1]) * y +
+    x[length(x)] * y[1] -
+    y[length(y)] * x[1]
+) /
+  sqrt(
+    (y[length(y)] - y[1])^2 +
+      (x[length(x)] - x[1])^2
+  )
+
+k_elbow <- x[which.max(d_line)]
+
+
+# 3. Silhouette width: k = 2–10
+
+sil_k <- purrr::map_dfr(
+  2:10,
+  \(kk) {
+    cl <- stats::cutree(
+      hc_w,
+      k = kk
+    )
+
+    s <- cluster::silhouette(
+      cl,
+      d_pca
+    )
+
+    tibble::tibble(
+      k = kk,
+      avg_sil = mean(
+        s[, "sil_width"]
+      )
+    )
+  }
+)
+
+k_sil <- sil_k$k[
+  which.max(sil_k$avg_sil)
+]
+
+sil_max <- max(
+  sil_k$avg_sil
+)
+
+p_sil <- ggplot2::ggplot(
+  sil_k,
+  ggplot2::aes(
+    x = k,
+    y = avg_sil
+  )
+) +
+  ggplot2::geom_line() +
+  ggplot2::geom_point() +
+  ggplot2::geom_vline(
+    xintercept = k_sil,
+    linetype = 2
+  ) +
+  ggplot2::scale_x_continuous(
+    breaks = 2:10
+  ) +
+  ggplot2::labs(
+    x = "Number of clusters (k)",
+    y = "Average silhouette width"
+  ) +
+  ggplot2::theme_minimal()
+
+p_sil
+
+
+# 4. Gap statistic
+
+set.seed(123)
+
+gap_stat <- cluster::clusGap(
+  datos.pca,
+  FUNcluster = function(x, k) {
+    hc <- stats::hclust(
+      stats::dist(x),
+      method = "ward.D2"
+    )
+
+    list(
+      cluster = stats::cutree(
+        hc,
+        k = k
+      )
+    )
+  },
+  K.max = 10,
+  B = 500
+)
+
+gap_table <- as.data.frame(
+  gap_stat$Tab
+)
+
+gap_table$k <- 1:nrow(
+  gap_table
+)
+
+k_gap_max <- gap_table$k[
+  which.max(gap_table$gap)
+]
+
+k_gap_firstmax <- cluster::maxSE(
+  gap_table$gap,
+  gap_table$SE.sim,
+  method = "firstmax"
+)
+
+k_gap_SEmax <- cluster::maxSE(
+  gap_table$gap,
+  gap_table$SE.sim,
+  method = "firstSEmax"
+)
+
+k_gap_tibs <- cluster::maxSE(
+  gap_table$gap,
+  gap_table$SE.sim,
+  method = "Tibs2001SEmax"
+)
+
+p_gap <- factoextra::fviz_gap_stat(
+  gap_stat
+) +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(
+    x = "Number of clusters (k)",
+    y = "Gap statistic"
+  )
+
+p_gap
+
+
+# 5. HCPC: hierarchical clustering on principal components
+
+hcpc <- FactoMineR::HCPC(
+  mv,
+  nb.clust = -1,
+  graph = FALSE
+)
+
+clus_hcpc <- hcpc$data.clust$clust
+
+k_hcpc <- length(
+  unique(clus_hcpc)
+)
+
+cluster_sizes_hcpc <- tibble::tibble(
+  Cluster = factor(clus_hcpc)
+) %>%
+  dplyr::count(
+    Cluster,
+    name = "N"
+  )
+
+cluster_sizes_hcpc %>%
+  knitr::kable(
+    caption = "Cluster sizes obtained with HCPC"
+  )
+
+sil_hcpc <- cluster::silhouette(
+  as.integer(clus_hcpc),
+  d_pca
+)
+
+sil_hcpc_summary <- tibble::tibble(
+  Cluster = names(
+    summary(sil_hcpc)$clus.avg.widths
+  ),
+  N = as.integer(
+    table(clus_hcpc)
+  ),
+  avg_sil = as.numeric(
+    summary(sil_hcpc)$clus.avg.widths
+  )
+) %>%
+  dplyr::bind_rows(
+    tibble::tibble(
+      Cluster = "Overall",
+      N = length(clus_hcpc),
+      avg_sil = mean(
+        sil_hcpc[, "sil_width"]
+      )
+    )
+  )
+
+sil_hcpc_summary %>%
+  dplyr::mutate(
+    avg_sil = round(
+      avg_sil,
+      3
+    )
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Silhouette statistics for the HCPC partition"
+  )
+
+p_sil_hcpc <- factoextra::fviz_silhouette(
+  sil_hcpc,
+  print.summary = FALSE
+) +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(
+    title = NULL
+  )
+
+p_sil_hcpc
+
+
+# 6. Comparison of clustering criteria
+
+cluster_comparison <- tibble::tibble(
+  Method = c(
+    "WSS / Elbow",
+    "Silhouette",
+    "Gap statistic (global maximum)",
+    "Gap statistic (firstmax)",
+    "Gap statistic (firstSEmax)",
+    "Gap statistic (Tibshirani 2001)",
+    "HCPC"
+  ),
+  Selected_k = c(
+    k_elbow,
+    k_sil,
+    k_gap_max,
+    k_gap_firstmax,
+    k_gap_SEmax,
+    k_gap_tibs,
+    k_hcpc
+  )
+)
+
+cluster_comparison %>%
+  knitr::kable(
+    caption = "Comparison of clustering criteria and HCPC"
+  )
+
+
+# 7. Silhouette values for k = 2–10
+
+sil_k %>%
+  dplyr::mutate(
+    avg_sil = round(
+      avg_sil,
+      3
+    )
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Average silhouette width for k = 2–10"
+  )
+```
+
+
+```{r, echo=FALSE}
+hcpc <- HCPC(mv,nb.clust = 2, graph = FALSE)
+
+
+tree <- \() {
+  plot.HCPC(hcpc,
+          choice = "map",
+          legend = list(x = "topright",
+                        cex = 0.6,
+                        inset = 0.001,
+                        box.lty = 0),
+          draw.tree = FALSE)
+  
+}
+
+
+hc <- hcpc$call$t$tree
+
+k <- length(unique(hcpc$data.clust$clust))
+
+clus_tree <- cutree(hc, k)
+clus <- setNames(as.integer(as.character(hcpc$data.clust$clust)), 
+                 rownames(hcpc$data.clust))
+clus <- clus[rownames(mv$ind$coord)]     
+
+# cat("Agreement between cutree() and consolidated HCPC clusters:\n")
+# print(table(cutree = clus_tree[names(clus)], HCPC = clus))
+
+clus_df <- data.frame(
+  Accesion = names(clus),
+  Cluster = clus
+)
+
+# write_xlsx(clus_df, "files/STable-4.xlsx")
+
+fig4 <- plot_grid(pcavar, tree,
+                  nrow = 1, labels = "auto")
+p <- fig4 %>%
+  ggsave2(plot = .
+          , "manuscript/Figure_3.jpg"
+          , units = "cm", width = 35, height = 20)
+
+p %>% include_graphics()
+
+```
+
+# Objective 3
+## Analysis multivariate 
+```{r, echo=FALSE}
+datos <- blues |>
+  dplyr::inner_join(dplyr::mutate(quali, geno = as.character(geno)), by = "geno")
+
+datos %>% web_table(scrolly = "400px")
+
+```
+

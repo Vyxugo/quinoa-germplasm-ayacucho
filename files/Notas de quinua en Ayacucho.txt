@@ -1,0 +1,14 @@
+Notas de quinua en Ayacucho 
+- Escalas BBCH - Para cada descriptor en que momento se evaluó
+- El significado de cada descriptor cuantitativa- igual en que momento se evaluó según escala BBCH
+- Los datos cuantitativos para las entradas no están coincidiendo con las entradas originales
+
+
+
+RENS	gr./planta	RENDIMIENTO DE SEMILLA POR PLANTA	
+ALTP	cm	ALTURA DE PLANTA		
+DTAL	mm.	DIAMETRO DE TALLO		
+LPAN	cm	LONGITUD DE PANOJA		
+DPAN	cm	DIAMETRO DE PANOJA		
+DGRA	mm.	DIAMETRO DE GRANO		
+PES1	gr.	PESO DE 1000 SEMILLAS
