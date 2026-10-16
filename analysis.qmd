@@ -34,6 +34,7 @@ library(psych)
 library(plotly)
 library(corrplot)
 library(htmlwidgets)
+library(devtools)
 source('https://inkaverse.com/setup.r')
 
 ```
@@ -67,6 +68,7 @@ dic <- info |>
 
 fb <- date
 
+
 for (cod in unique(dic$codigo)) {
   d  <- dic |> dplyr::filter(codigo == cod)
   lk <- setNames(d$categoria_en, d$valor)
@@ -84,8 +86,13 @@ fb %>% web_table(scrolly = "400px")
 
 ```
 
-# Objective 1
-## qualitative
+# Objective 1: To assess the phenotypic diversity of 144 quinoa accessions (Chenopodium quinoa Willd.) under the agroecological conditions of Ayacucho, Peru, using diversity indices and repeatability estimates of qualitative traits.
+
+
+## Morphological diversity based on qualitative descriptors
+
+Na = number of accessions per class; Nc = observed classes; Ne = effective number of classes; He = Nei’s diversity index; H′ = Shannon–Weaver index.
+
 ```{r, echo=FALSE}
 
 #  detector incoherence 
@@ -99,18 +106,159 @@ dif <- fb |>
 # categorical accessions 
 quali <- fb |>
   dplyr::rename(block = Block, sub_block = `Sub-block`, Ac = `Ac-`, geno = Trat) |>
-  dplyr::select(-dplyr::all_of(c("LOD", "NPB", "NLT", "PTL", "MLL", "MLW", "SYP", "PH", "SD", "PLr", "PDr", "GD", "TSW"))) |>
+  dplyr::select(-dplyr::all_of(c("LOD", "NPB", "NLT", "PTL", "MLL", "MLW", "SYP", "PH", "SD", "PLr", "PDr", "GD", "TSW", "PHS"))) |>
   dplyr::arrange(geno, block) |>
   dplyr::distinct(geno, .keep_all = TRUE) |>
   dplyr::select(-Plot, -block, -sub_block, -rows, -cols, -Ac) |>
   dplyr::mutate(dplyr::across(-c(geno), as.factor))
 
-quali %>% web_table(scrolly = "400px")
 
 ```
 
-# Objective 2
-## Analysis Quantitative 
+```{r, echo=FALSE}
+
+# 1. Diccionario: acrónimo
+dic_q <- info |>
+  dplyr::filter(tipo == "cualitativo", !is.na(categoria_en), categoria_en != "") |>
+  dplyr::mutate(valor_num = suppressWarnings(as.numeric(valor)))
+
+labs <- dic_q |>
+  dplyr::distinct(Acronym, descripcion_en) |>
+  tibble::deframe()                                  
+
+ord <- dic_q |>
+  dplyr::distinct(Acronym, categoria_en, valor_num)
+
+vars_q <- setdiff(names(quali), "geno")
+stopifnot(nrow(quali) == 144, all(vars_q %in% names(labs)))
+
+for (v in vars_q) {
+  x   <- as.character(quali[[v]])
+  bad <- setdiff(unique(x[!is.na(x)]), ord$categoria_en[ord$Acronym == v])
+  if (length(bad)) {
+    message("⚠ ", v, ": clases fuera del diccionario -> NA: ", paste(bad, collapse = ", "))
+    quali[[v]][x %in% bad] <- NA
+  }
+}
+quali <- quali |> dplyr::mutate(dplyr::across(dplyr::all_of(vars_q), droplevels))
+
+# 3. Frecuencias por clase
+sum_q <- function(df, v) {
+  df |>
+    dplyr::filter(!is.na(.data[[v]])) |>
+    dplyr::count(cat_en = as.character(.data[[v]]), name = "Na") |>
+    dplyr::mutate(fi = Na / sum(Na)) |>
+    dplyr::left_join(
+      ord |> dplyr::filter(Acronym == v) |> dplyr::select(cat_en = categoria_en, valor_num),
+      by = "cat_en") |>
+    dplyr::arrange(valor_num) |>
+    dplyr::transmute(`Qualitative trait` = unname(labs[v]),
+                     `Phenotypic classes observed` = cat_en, Na, fi)
+}
+qtb <- purrr::map_dfr(vars_q, \(v) sum_q(quali, v))
+
+# 4. Índices Ne, He, H′ con bootstrap sobre accesiones (SE e IC 95 %)
+div_counts <- function(cnt) {
+  p <- cnt / sum(cnt); p <- p[p > 0]
+  c(Ne = 1 / sum(p^2), He = 1 - sum(p^2), Hp = -sum(p * log(p)) + 0)
+}
+
+boot_div <- function(df, v, B = 2000) {
+  d   <- df |> dplyr::filter(!is.na(.data[[v]])) |> droplevels()
+  cnt <- unclass(table(as.character(d$geno), as.character(d[[v]])))
+  est <- div_counts(colSums(cnt))
+  bs  <- t(replicate(B, div_counts(
+    colSums(cnt[sample.int(nrow(cnt), replace = TRUE), , drop = FALSE]))))
+  se  <- apply(bs, 2, sd)
+  ci  <- apply(bs, 2, quantile, probs = c(0.025, 0.975))
+  tibble::tibble(
+    n_acc = nrow(cnt), Nc = ncol(cnt), Ne = est[["Ne"]],
+    He = est[["He"]], se_He = se[["He"]], He_lo = ci[1, "He"], He_hi = ci[2, "He"],
+    Hp = est[["Hp"]], se_Hp = se[["Hp"]], Hp_lo = ci[1, "Hp"], Hp_hi = ci[2, "Hp"]
+  )
+}
+
+set.seed(123)
+div_tab <- purrr::map_dfr(vars_q, \(v) {
+  boot_div(quali, v) |> dplyr::mutate(`Qualitative trait` = unname(labs[v]), .before = 1)
+})
+
+# 5. Tabla 
+fmt <- qtb |>
+  dplyr::left_join(div_tab, by = "Qualitative trait") |>
+  dplyr::group_by(`Qualitative trait`) |>
+  dplyr::mutate(
+    first = dplyr::row_number() == 1,
+    Na    = as.character(Na),
+    fi    = sprintf("%.2f", fi),
+    Nc          = dplyr::if_else(first, as.character(Nc), ""),
+    Ne          = dplyr::if_else(first, sprintf("%.2f", Ne), ""),
+    `He ± SE`   = dplyr::if_else(first, sprintf("%.2f ± %.2f", He, se_He), ""),
+    `He 95% CI` = dplyr::if_else(first, sprintf("%.2f–%.2f", He_lo, He_hi), ""),
+    `H′ ± SE`   = dplyr::if_else(first, sprintf("%.2f ± %.2f", Hp, se_Hp), ""),
+    `H′ 95% CI` = dplyr::if_else(first, sprintf("%.2f–%.2f", Hp_lo, Hp_hi), ""),
+    `Qualitative trait` = dplyr::if_else(first, `Qualitative trait`, "")
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::select(`Qualitative trait`, `Phenotypic classes observed`, Na, fi,
+                Nc, Ne, `He ± SE`, `He 95% CI`, `H′ ± SE`, `H′ 95% CI`)
+
+se_  <- \(x) sd(x) / sqrt(length(x))
+tq   <- stats::qt(0.975, df = nrow(div_tab) - 1)
+ci_t <- \(x) sprintf("%.2f–%.2f", mean(x) - tq * se_(x), mean(x) + tq * se_(x))
+
+mrow <- tibble::tibble(
+  `Qualitative trait` = "Mean ± SE", `Phenotypic classes observed` = "", Na = "", fi = "",
+  Nc          = sprintf("%.2f ± %.2f", mean(div_tab$Nc), se_(div_tab$Nc)),
+  Ne          = sprintf("%.2f ± %.2f", mean(div_tab$Ne), se_(div_tab$Ne)),
+  `He ± SE`   = sprintf("%.2f ± %.2f", mean(div_tab$He), se_(div_tab$He)),
+  `He 95% CI` = ci_t(div_tab$He),
+  `H′ ± SE`   = sprintf("%.2f ± %.2f", mean(div_tab$Hp), se_(div_tab$Hp)),
+  `H′ 95% CI` = ci_t(div_tab$Hp)
+)
+
+Diversity <- dplyr::bind_rows(fmt, mrow)
+Diversity |> web_table(scrolly = "400px")
+
+writexl::write_xlsx(Diversity, "files/STable-1.xlsx")
+
+
+# 5. Tabla 1 resumida (una fila por carácter cualitativo)
+
+se_  <- \(x) sd(x) / sqrt(length(x))
+tq   <- stats::qt(0.975, df = nrow(div_tab) - 1)
+ci_t <- \(x) sprintf("%.2f–%.2f", mean(x) - tq * se_(x), mean(x) + tq * se_(x))
+
+Diversity <- div_tab |>
+  dplyr::transmute(
+    `Qualitative trait`,
+    Nc,
+    Ne          = sprintf("%.2f", Ne),
+    `He ± SE`   = sprintf("%.2f ± %.2f", He, se_He),
+    `He 95% CI` = sprintf("%.2f–%.2f", He_lo, He_hi),
+    `H′ ± SE`   = sprintf("%.2f ± %.2f", Hp, se_Hp),
+    `H′ 95% CI` = sprintf("%.2f–%.2f", Hp_lo, Hp_hi)
+  ) |>
+  dplyr::mutate(Nc = as.character(Nc))
+
+# Fila de promedios
+mrow <- tibble::tibble(
+  `Qualitative trait` = "Mean ± SE",
+  Nc          = sprintf("%.2f ± %.2f", mean(div_tab$Nc), se_(div_tab$Nc)),
+  Ne          = sprintf("%.2f ± %.2f", mean(div_tab$Ne), se_(div_tab$Ne)),
+  `He ± SE`   = sprintf("%.2f ± %.2f", mean(div_tab$He), se_(div_tab$He)),
+  `He 95% CI` = ci_t(div_tab$He),
+  `H′ ± SE`   = sprintf("%.2f ± %.2f", mean(div_tab$Hp), se_(div_tab$Hp)),
+  `H′ 95% CI` = ci_t(div_tab$Hp)
+)
+
+Diversity <- dplyr::bind_rows(Diversity, mrow)
+
+
+writexl::write_xlsx(Diversity, "manuscript/Table-1.xlsx")
+```
+
+## Morphological diversity based on quantitative descriptors
 
 ```{r, echo=FALSE}
 
@@ -127,20 +275,7 @@ quanti <- fb |> dplyr::rename(
   )
 
 exp <- quanti
-str(exp)
-Boxplot(exp$LOD)
-Boxplot(exp$NPB)
-Boxplot(exp$NLT)
-Boxplot(exp$PTL)
-Boxplot(exp$MLL)
-Boxplot(exp$MLW)
-Boxplot(exp$SYP)
-Boxplot(exp$PH)
-Boxplot(exp$SD)
-Boxplot(exp$PLr)
-Boxplot(exp$PDr)
-Boxplot(exp$GD)
-Boxplot(exp$TSW)
+
 ```
 
 ```{r, echo=FALSE}
@@ -149,7 +284,7 @@ rslt <- 8:length(exp) %>% map(\(x) {
 trait <- names(exp)[x]
 
 exp %>% 
-   tidyr::drop_na(all_of(trait))%>% 
+   drop_na(trait)%>% 
   H2cal(trait = trait
     , gen.name = "geno"
     , rep.n = 2
@@ -178,425 +313,379 @@ blups <- 1:length(rslt) %>% map(\(x) {
                                         , by = c('geno')), .)
 
 tabsmr %>% web_table(scrolly = "400px")
-# writexl::write_xlsx(tabsmr, "files/STable-4.xlsx")
 
 ```
 
-### Multivariate Analysis using BLUEs
+
+##  Tabla 2: Presents descriptive statistics for the quantitative traits evaluated in the blues dataset. For each trait, the table reports the mean, minimum, maximum, coefficient of variation (CV%) and broad-sense heritability (H²), providing a summary of the central tendency, range, relative variability and genetic determination of the measured characteristics.
 
 ```{r, echo=FALSE}
 
-acc <- blues
-
-pca_vars <- acc %>%
-  dplyr::select(-geno) %>%
-  dplyr::select(where(is.numeric)) %>%
-  names()
-
-# 3. PCA using the 78 accessions
-
-pca_data <- acc %>%
-  dplyr::select(
-    geno,
-    dplyr::all_of(pca_vars)
-  )
-
-rownames(pca_data) <- pca_data$geno
-
-pca_data <- pca_data %>%
-  dplyr::select(-geno)
-
-mv <- FactoMineR::PCA(
-  pca_data,
-  scale.unit = TRUE,
-  graph = FALSE
-)
-
-pcainfo <- factoextra::get_pca(mv)
-
-pcainfo
-
-# Variable correlations
-
-pcainfo$cor %>%knitr::kable(caption = "Variable correlations" )
-
-# Variable contributions
-
-pcainfo$contrib %>% knitr::kable( caption = "Variable contribution")
-# Variable cos2
-
-pcainfo$cos2 %>% knitr::kable( caption = "Variable cos2")
-
-pcavar <- mv %>% plot.PCA(
-    choix = "var",
-    title = "",
-    autoLab = "y",
-    cex = 0.8,
-    shadowtext = TRUE
-  )
-
-pcaind <- mv %>%
-  plot.PCA(
-    choix = "ind",
-    habillage =2,
-    title = "",
-    autoLab = "y",
-    cex = 0.8,
-    shadowtext = TRUE,
-    label = "ind"
-  )
+info %>% dplyr::count(tipo)
+info %>% dplyr::filter(Acronym %in% c("LOD","NPB","NLT","PTL","MLL","MLW","SYP","PH","SD","PLr","PDr","GD","TSW")) %>%
+  dplyr::distinct(Acronym, tipo, descripcion_en)
 
 
-list( pcavar, pcaind) %>%
-  plot_grid(  plotlist = ., nrow = 1, labels = "AUTO",
-              rel_heights = c(1, 1.1)
-  )
+bluesmeans <- blues
 
-```
+bluesmeans %>%
+  dplyr::select(c(2:14)) %>%
+  dplyr::summarise(dplyr::across(dplyr::everything(), ~ sum(.x < 0, na.rm = TRUE))) %>%
+  tidyr::pivot_longer(dplyr::everything(), names_to = "trait", values_to = "n_negative_BLUEs") %>%
+  dplyr::filter(n_negative_BLUEs > 0)
 
-### Cluster validation 
-
-```{r, echo=FALSE}
-
-# 1. PCA coordinates of the 78 accessions
-
-datos.pca <- mv$ind$coord
-
-d_pca <- stats::dist(datos.pca)
-
-hc_w <- stats::hclust(
-  d_pca,
-  method = "ward.D2"
-)
-
-
-# 2. WSS / Elbow method
-
-p_wss <- factoextra::fviz_nbclust(
-  datos.pca,
-  hcut,
-  method = "wss",
-  k.max = 10
-)
-
-p_wss
-
-wss_k <- p_wss$data
-
-x <- as.numeric(as.character(wss_k$clusters))
-y <- wss_k$y
-
-d_line <- abs(
-  (y[length(y)] - y[1]) * x -
-    (x[length(x)] - x[1]) * y +
-    x[length(x)] * y[1] -
-    y[length(y)] * x[1]
-) /
-  sqrt(
-    (y[length(y)] - y[1])^2 +
-      (x[length(x)] - x[1])^2
-  )
-
-k_elbow <- x[which.max(d_line)]
-
-
-# 3. Silhouette width: k = 2–10
-
-sil_k <- purrr::map_dfr(
-  2:10,
-  \(kk) {
-    cl <- stats::cutree(
-      hc_w,
-      k = kk
-    )
-
-    s <- cluster::silhouette(
-      cl,
-      d_pca
-    )
-
-    tibble::tibble(
-      k = kk,
-      avg_sil = mean(
-        s[, "sil_width"]
-      )
-    )
-  }
-)
-
-k_sil <- sil_k$k[
-  which.max(sil_k$avg_sil)
-]
-
-sil_max <- max(
-  sil_k$avg_sil
-)
-
-p_sil <- ggplot2::ggplot(
-  sil_k,
-  ggplot2::aes(
-    x = k,
-    y = avg_sil
-  )
-) +
-  ggplot2::geom_line() +
-  ggplot2::geom_point() +
-  ggplot2::geom_vline(
-    xintercept = k_sil,
-    linetype = 2
-  ) +
-  ggplot2::scale_x_continuous(
-    breaks = 2:10
-  ) +
-  ggplot2::labs(
-    x = "Number of clusters (k)",
-    y = "Average silhouette width"
-  ) +
-  ggplot2::theme_minimal()
-
-p_sil
-
-
-# 4. Gap statistic
-
-set.seed(123)
-
-gap_stat <- cluster::clusGap(
-  datos.pca,
-  FUNcluster = function(x, k) {
-    hc <- stats::hclust(
-      stats::dist(x),
-      method = "ward.D2"
-    )
-
+rl <- bluesmeans %>%
+  dplyr::select(c(2:14)) %>%
+  dplyr::mutate(dplyr::across(dplyr::everything(), ~ ifelse(.x < 0, 0, .x))) %>%
+  dplyr::summarise(dplyr::across(
+    dplyr::everything(),
     list(
-      cluster = stats::cutree(
-        hc,
-        k = k
-      )
+      Mean    = ~ round(mean(.x, na.rm = TRUE), 2),
+      Min     = ~ round(min(.x, na.rm = TRUE), 2),
+      Max     = ~ round(max(.x, na.rm = TRUE), 2),
+      `CV(%)` = ~ round(sd(.x, na.rm = TRUE) / mean(.x, na.rm = TRUE) * 100, 2)
     )
-  },
-  K.max = 10,
-  B = 500
-)
-
-gap_table <- as.data.frame(
-  gap_stat$Tab
-)
-
-gap_table$k <- 1:nrow(
-  gap_table
-)
-
-k_gap_max <- gap_table$k[
-  which.max(gap_table$gap)
-]
-
-k_gap_firstmax <- cluster::maxSE(
-  gap_table$gap,
-  gap_table$SE.sim,
-  method = "firstmax"
-)
-
-k_gap_SEmax <- cluster::maxSE(
-  gap_table$gap,
-  gap_table$SE.sim,
-  method = "firstSEmax"
-)
-
-k_gap_tibs <- cluster::maxSE(
-  gap_table$gap,
-  gap_table$SE.sim,
-  method = "Tibs2001SEmax"
-)
-
-p_gap <- factoextra::fviz_gap_stat(
-  gap_stat
-) +
-  ggplot2::theme_minimal() +
-  ggplot2::labs(
-    x = "Number of clusters (k)",
-    y = "Gap statistic"
-  )
-
-p_gap
-
-
-# 5. HCPC: hierarchical clustering on principal components
-
-hcpc <- FactoMineR::HCPC(
-  mv,
-  nb.clust = -1,
-  graph = FALSE
-)
-
-clus_hcpc <- hcpc$data.clust$clust
-
-k_hcpc <- length(
-  unique(clus_hcpc)
-)
-
-cluster_sizes_hcpc <- tibble::tibble(
-  Cluster = factor(clus_hcpc)
-) %>%
-  dplyr::count(
-    Cluster,
-    name = "N"
-  )
-
-cluster_sizes_hcpc %>%
-  knitr::kable(
-    caption = "Cluster sizes obtained with HCPC"
-  )
-
-sil_hcpc <- cluster::silhouette(
-  as.integer(clus_hcpc),
-  d_pca
-)
-
-sil_hcpc_summary <- tibble::tibble(
-  Cluster = names(
-    summary(sil_hcpc)$clus.avg.widths
-  ),
-  N = as.integer(
-    table(clus_hcpc)
-  ),
-  avg_sil = as.numeric(
-    summary(sil_hcpc)$clus.avg.widths
-  )
-) %>%
-  dplyr::bind_rows(
-    tibble::tibble(
-      Cluster = "Overall",
-      N = length(clus_hcpc),
-      avg_sil = mean(
-        sil_hcpc[, "sil_width"]
-      )
-    )
-  )
-
-sil_hcpc_summary %>%
-  dplyr::mutate(
-    avg_sil = round(
-      avg_sil,
-      3
-    )
+  )) %>%
+  tidyr::pivot_longer(
+    cols = dplyr::everything(),
+    names_to = c("Quantitative trait", "stat"),
+    names_pattern = "^(.*)_(Mean|Min|Max|CV\\(%\\))$",
+    values_to = "value"
   ) %>%
-  knitr::kable(
-    digits = 3,
-    caption = "Silhouette statistics for the HCPC partition"
+  tidyr::pivot_wider(names_from = stat, values_from = value) %>%
+  dplyr::mutate(dplyr::across(Mean:`CV(%)`, ~ formatC(.x, format = "f", digits = 2)))
+
+stopifnot("repeatability" %in% names(tabsmr))
+
+rep_tab <- tabsmr %>%
+  dplyr::distinct(trait, .keep_all = TRUE) %>%
+  dplyr::transmute(
+    `Quantitative trait` = trait,
+    Repeatability = sprintf("%.2f", repeatability)
   )
 
-p_sil_hcpc <- factoextra::fviz_silhouette(
-  sil_hcpc,
-  print.summary = FALSE
-) +
-  ggplot2::theme_minimal() +
-  ggplot2::labs(
-    title = NULL
-  )
+rl <- rl %>%
+  dplyr::left_join(rep_tab, by = "Quantitative trait")
 
-p_sil_hcpc
+stopifnot(nrow(rl) == 13, !any(is.na(rl$Repeatability)))
 
+labs_n <- info |>
+  dplyr::filter(Acronym %in% rl$`Quantitative trait`, !is.na(descripcion_en)) |>
+  dplyr::distinct(Acronym, descripcion_en) |>
+  tibble::deframe()
 
-# 6. Comparison of clustering criteria
+faltan <- setdiff(rl$`Quantitative trait`, names(labs_n))
+if (length(faltan)) stop("Sin descripcion_en en el diccionario para: ", paste(faltan, collapse = ", "))
 
-cluster_comparison <- tibble::tibble(
-  Method = c(
-    "WSS / Elbow",
-    "Silhouette",
-    "Gap statistic (global maximum)",
-    "Gap statistic (firstmax)",
-    "Gap statistic (firstSEmax)",
-    "Gap statistic (Tibshirani 2001)",
-    "HCPC"
-  ),
-  Selected_k = c(
-    k_elbow,
-    k_sil,
-    k_gap_max,
-    k_gap_firstmax,
-    k_gap_SEmax,
-    k_gap_tibs,
-    k_hcpc
-  )
-)
+rl <- rl |>
+  dplyr::mutate(`Quantitative trait` = unname(labs_n[`Quantitative trait`]))
 
-cluster_comparison %>%
-  knitr::kable(
-    caption = "Comparison of clustering criteria and HCPC"
-  )
+rl |> web_table()
+writexl::write_xlsx(rl, "manuscript/Table-2.xlsx")
 
-
-# 7. Silhouette values for k = 2–10
-
-sil_k %>%
-  dplyr::mutate(
-    avg_sil = round(
-      avg_sil,
-      3
-    )
-  ) %>%
-  knitr::kable(
-    digits = 3,
-    caption = "Average silhouette width for k = 2–10"
-  )
 ```
 
 
+# Objective 2: To identify promising accessions using BLUEs of five agronomic traits and to compare five selection approaches.
+
+## Data preparation
+
+The BLUEs of five traits (SYP, TSW, PH, PLr, LOD) were used for the 144 accessions. Negative BLUEs of LOD were set to zero. Traits were rescaled to 0–1 so that higher values are always better: LOD is inverted, and PH is penalized by its distance to an optimal range (P25–P75). The top 10 % of accessions (n = 14) was retained by each method.
+
 ```{r, echo=FALSE}
-hcpc <- HCPC(mv,nb.clust = 2, graph = FALSE)
+vars5 <- c("SYP", "TSW", "PH", "PLr", "LOD")
 
+dat <- blues |>
+  dplyr::select(geno, dplyr::all_of(vars5)) |>
+  dplyr::mutate(LOD = pmax(LOD, 0))
+stopifnot(nrow(dat) == 144, !anyNA(dat))
 
-tree <- \() {
-  plot.HCPC(hcpc,
-          choice = "map",
-          legend = list(x = "topright",
-                        cex = 0.6,
-                        inset = 0.001,
-                        box.lty = 0),
-          draw.tree = FALSE)
-  
+dat5  <- tibble::column_to_rownames(as.data.frame(dat), "geno")
+n_top <- round(0.10 * nrow(dat))
+
+w <- c(SYP = 3, TSW = 2, PH = 1, PLr = 1, LOD = 1)
+w <- (w / sum(w))[vars5]
+
+ph_rng <- quantile(dat$PH, c(0.25, 0.75))
+ph_pen <- pmax(ph_rng[[1]] - dat$PH, 0) + pmax(dat$PH - ph_rng[[2]], 0)
+mm <- \(x) (x - min(x)) / (max(x) - min(x))
+
+M <- dat |>
+  dplyr::mutate(PH = ph_pen, dplyr::across(-geno, mm),
+                dplyr::across(c(PH, LOD), \(x) 1 - x)) |>
+  tibble::column_to_rownames("geno")
+
+scores  <- tibble::tibble(geno = dat$geno)
+methods <- c("PCA", "Elston", "Mulamba-Mock", "Ideotype", "RF")
+
+top_df <- function(method) {
+  scores |>
+    dplyr::mutate(Rank = rank(-.data[[method]], ties.method = "min")) |>
+    dplyr::arrange(Rank, geno) |>
+    dplyr::slice_head(n = n_top) |>
+    dplyr::select(Rank, Accession = geno, Score = dplyr::all_of(method)) |>
+    dplyr::left_join(dat, by = c("Accession" = "geno")) |>
+    dplyr::mutate(Score = signif(Score, 4),
+                  dplyr::across(dplyr::all_of(vars5), \(x) round(x, 2)))
 }
 
+web_table <- function(x, caption = NULL) {
+  DT::datatable(x, rownames = FALSE, caption = caption, filter = "top",
+                extensions = "Buttons",
+                options = list(pageLength = 14, scrollX = TRUE, dom = "Bfrtip",
+                               buttons = c("copy", "csv", "excel")),
+                class = "compact stripe hover")
+}
 
-hc <- hcpc$call$t$tree
+plot_top <- function(method, title) {
+  top_df(method) |>
+    ggplot(aes(reorder(Accession, Score), Score)) +
+    geom_col(fill = "#2166AC") +
+    coord_flip() +
+    labs(x = NULL, y = "Score", title = title) +
+    theme_minimal()
+}
+```
 
-k <- length(unique(hcpc$data.clust$clust))
+## Principal component analysis
 
-clus_tree <- cutree(hc, k)
-clus <- setNames(as.integer(as.character(hcpc$data.clust$clust)), 
-                 rownames(hcpc$data.clust))
-clus <- clus[rownames(mv$ind$coord)]     
+PCA was run on the standardized BLUEs. The first principal component, oriented so that SYP loads positively, was used as the selection score.
 
-# cat("Agreement between cutree() and consolidated HCPC clusters:\n")
-# print(table(cutree = clus_tree[names(clus)], HCPC = clus))
+```{r, echo=FALSE}
+mv <- FactoMineR::PCA(dat5, scale.unit = TRUE, graph = FALSE)
 
-clus_df <- data.frame(
-  Accesion = names(clus),
-  Cluster = clus
+scores$PCA <- as.numeric(mv$ind$coord[as.character(dat$geno), 1] *
+                         sign(mv$var$coord["SYP", 1]))
+
+factoextra::fviz_pca_var(mv, repel = TRUE)
+top_df("PCA") |> web_table(caption = "Top 10 % accessions by PCA (PC1 score)")
+```
+
+## Elston index
+
+The Elston (1963) index was computed with `st4gi::elston()`, as in the F7 selection stage of Lozano-Isla et al. (2023). It is a weight-free index on standardized trait means, so traits to be minimized (the PH penalty and LOD) are multiplied by −1 before the calculation. The index is used here with yield, plant height and lodging.
+
+```{r, echo=FALSE}
+elston_df <- data.frame(geno = as.character(dat$geno), SYP = dat$SYP,
+                        PH = -ph_pen, LOD = -dat$LOD)
+
+elst <- tryCatch(
+  st4gi::elston(traits = c("SYP", "PH", "LOD"), geno = "geno", dfr = elston_df),
+  error = \(e) st4gi::elston(elston_df, vars = c("SYP", "PH", "LOD"), geno = "geno")
 )
 
-# write_xlsx(clus_df, "files/STable-4.xlsx")
+idx_col <- grep("index", names(elst), ignore.case = TRUE)[1]
+scores$Elston <- elst[[idx_col]][match(as.character(dat$geno),
+                                       as.character(elst$geno))]
 
-fig4 <- plot_grid(pcavar, tree,
-                  nrow = 1, labels = "auto")
-p <- fig4 %>%
-  ggsave2(plot = .
-          , "manuscript/Figure_3.jpg"
-          , units = "cm", width = 35, height = 20)
+sel <- top_df("Elston")$Accession
+dplyr::mutate(dat, Elston = scores$Elston, Top = geno %in% sel) |>
+  ggplot(aes(Elston, SYP, color = Top)) +
+  geom_point(size = 2, alpha = .8) +
+  scale_color_manual(values = c("grey70", "#B2182B")) +
+  theme_minimal()
 
-p %>% include_graphics()
-
+top_df("Elston") |> web_table(caption = "Top 10 % accessions by Elston index")
 ```
 
-# Objective 3
-## Analysis multivariate 
+## Mulamba–Mock index
+
+Accessions were ranked for each oriented trait (rank 1 = best) and the ranks were combined as a weighted sum, with weights of 3 for SYP, 2 for TSW and 1 for the remaining traits.
+
 ```{r, echo=FALSE}
-datos <- blues |>
-  dplyr::inner_join(dplyr::mutate(quali, geno = as.character(geno)), by = "geno")
+rmat <- apply(M, 2, \(x) rank(-x, ties.method = "average"))
+scores$`Mulamba-Mock` <- -as.vector(rmat %*% w)
 
-datos %>% web_table(scrolly = "400px")
-
+plot_top("Mulamba-Mock", "Mulamba-Mock (−suma ponderada de rangos)")
+top_df("Mulamba-Mock") |> web_table(caption = "Top 10 % accessions by Mulamba-Mock index")
 ```
 
+## Distance to the ideotype
+
+The ideotype takes the best value of every oriented trait (maximum for SYP, TSW and PLr; P25–P75 range for PH; minimum for LOD). Accessions were scored by the negative weighted Euclidean distance to it.
+
+```{r, echo=FALSE}
+scores$Ideotype <- -sqrt(rowSums(sweep((1 - as.matrix(M))^2, 2, w, "*")))
+
+M[as.character(top_df("Ideotype")$Accession), ] |>
+  tibble::rownames_to_column("Accession") |>
+  tidyr::pivot_longer(-Accession, names_to = "Trait", values_to = "Value") |>
+  dplyr::mutate(Trait = factor(Trait, levels = vars5)) |>
+  ggplot(aes(Trait, Accession, fill = Value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "#2166AC", limits = c(0, 1)) +
+  theme_minimal()
+
+top_df("Ideotype") |> web_table(caption = "Top 10 % accessions closest to the ideotype")
+```
+
+## Random forest
+
+A random forest (2000 trees) predicted SYP from the other four traits. The out-of-bag prediction was used as the selection score, and permutation importance ranks the traits.
+
+```{r, echo=FALSE}
+set.seed(123)
+rf <- ranger::ranger(SYP ~ ., data = dat[, vars5], num.trees = 2000,
+                     importance = "permutation", seed = 123)
+scores$RF <- rf$predictions
+
+tibble::tibble(Variable = names(rf$variable.importance),
+               Importance = rf$variable.importance) |>
+  ggplot(aes(reorder(Variable, Importance), Importance)) +
+  geom_col(fill = "#2166AC") + coord_flip() +
+  labs(x = NULL, title = paste0("OOB R² = ", round(rf$r.squared, 3))) +
+  theme_minimal()
+
+top_df("RF") |> web_table(caption = "Top 10 % accessions by random forest (predicted SYP)")
+```
+
+## Comparison among selection methods
+
+Agreement among methods was assessed with Spearman and Pearson correlations, the overlap of the top 10 %, and the standardized selection differential of each trait. Accessions chosen by at least three methods are reported as consensus selections.
+
+```{r, echo=FALSE}
+stopifnot(all(methods %in% names(scores)),
+          all(sapply(scores[methods], \(x) all(is.finite(x)))))
+
+ranks <- scores |>
+  dplyr::mutate(dplyr::across(dplyr::all_of(methods),
+                              \(x) rank(-x, ties.method = "min")))
+
+sp   <- cor(ranks[, methods], method = "spearman")
+pe   <- cor(scores[, methods], method = "pearson")
+tops <- lapply(methods, \(m) ranks$geno[order(ranks[[m]])][1:n_top]) |>
+  setNames(methods)
+ov   <- sapply(methods, \(a) sapply(methods, \(b)
+                length(intersect(tops[[a]], tops[[b]]))))
+
+sd_tab <- sapply(methods, \(m) {
+  sel <- dat$geno %in% tops[[m]]
+  sapply(vars5, \(v) (mean(dat[[v]][sel]) - mean(dat[[v]])) / sd(dat[[v]]))
+}) |> round(2)
+
+freq <- table(unlist(tops))
+consensus <- tibble::tibble(Accession = names(freq), N_methods = as.integer(freq)) |>
+  dplyr::filter(N_methods >= 3) |>
+  dplyr::left_join(dat, by = c("Accession" = "geno")) |>
+  dplyr::mutate(dplyr::across(dplyr::all_of(vars5), \(x) round(x, 2))) |>
+  dplyr::arrange(dplyr::desc(N_methods))
+```
+
+### Correlación de Spearman entre rankings
+
+```{r, echo=FALSE}
+corrplot::corrplot(sp, method = "color", type = "upper", addCoef.col = "black",
+                   tl.col = "black", tl.srt = 45, is.corr = FALSE,
+                   col = colorRampPalette(c("#B2182B", "white", "#2166AC"))(200),
+                   cl.lim = c(min(sp), 1))
+```
+
+### Correlación de Pearson entre puntuaciones
+
+```{r, echo=FALSE}
+sc <- as.data.frame(scores[, methods])
+n_sel <- table(factor(unlist(tops), levels = scores$geno))
+cons  <- as.integer(n_sel[as.character(scores$geno)]) >= 3
+
+dir.create("files", showWarnings = FALSE)
+
+jpeg("files/Fig_pearson.jpg", width = 25, height = 25, units = "cm", res = 300)
+psych::pairs.panels(
+  sc,
+  bg       = c("grey80", "#B2182B")[cons + 1],
+  hist.col = "#2166AC",
+  pch      = 21,
+  method   = "pearson",
+  stars    = TRUE,
+  scale    = FALSE,
+  lm       = TRUE
+)
+invisible(dev.off())
+
+knitr::include_graphics("files/Fig_pearson.jpg")
+```
+
+```{r, echo=FALSE}
+tab_pe <- round(pe, 2) |>
+  as.data.frame() |>
+  tibble::rownames_to_column("Method")
+
+tab_pe |> web_table(caption = "Pearson correlation between selection scores")
+```
+
+### Coincidencias entre las 14 accesiones seleccionadas
+
+```{r, echo=FALSE}
+as.data.frame(as.table(ov)) |>
+  ggplot(aes(Var1, Var2, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq)) +
+  scale_fill_gradient(low = "white", high = "#2166AC") +
+  labs(x = NULL, y = NULL, fill = "Shared") +
+  theme_minimal()
+```
+
+### Diferencial de selección
+
+```{r, echo=FALSE}
+as.data.frame(as.table(sd_tab)) |>
+  dplyr::mutate(Var1 = factor(Var1, levels = rev(vars5))) |>
+  ggplot(aes(Var2, Var1, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq)) +
+  scale_fill_gradient2(low = "#B2182B", mid = "white", high = "#2166AC") +
+  labs(x = NULL, y = NULL, fill = "Std. diff.") +
+  theme_minimal()
+```
+
+## Top 10 % accessions of all methods
+
+```{r, echo=FALSE}
+tab_top <- purrr::map(methods, \(m) as.character(top_df(m)$Accession)) |>
+  setNames(methods) |>
+  tibble::as_tibble() |>
+  tibble::add_column(Rank = seq_len(n_top), .before = 1)
+
+tab_top |> web_table(caption = "Top 10 % accessions by selection method (rank order)")
+```
+
+```{r, echo=FALSE}
+acc     <- sort(unique(as.character(unlist(tops))))
+sel_mat <- sapply(methods, \(m) acc %in% as.character(tops[[m]]))
+
+tab_sel <- tibble::tibble(Accession = acc, N_methods = rowSums(sel_mat)) |>
+  dplyr::bind_cols(tibble::as_tibble(ifelse(sel_mat, "✓", ""))) |>
+  dplyr::left_join(dplyr::mutate(dat, geno = as.character(geno)),
+                   by = c("Accession" = "geno")) |>
+  dplyr::mutate(dplyr::across(dplyr::all_of(vars5), \(x) round(x, 2))) |>
+  dplyr::arrange(dplyr::desc(N_methods), Accession)
+
+tab_sel |> web_table(caption = "Accessions in the top 10 % of at least one method")
+```
+
+```{r, echo=FALSE}
+#| label: tab-consenso
+consensus |> web_table(caption = "Accessions selected by at least three methods")
+```
+
+## Supplementary Excel
+
+```{r, echo=FALSE}
+#| label: excel
+dir.create("manuscript", showWarnings = FALSE)
+
+sheets <- c(
+  list(Scores       = scores,
+       Ranks        = ranks,
+       Spearman     = tibble::as_tibble(round(sp, 2), rownames = "Method"),
+       Pearson      = tab_pe,
+       Top10_overlap = tibble::as_tibble(ov, rownames = "Method"),
+       Std_sel_diff = tibble::as_tibble(sd_tab, rownames = "Trait"),
+       Top10_wide   = tab_top,
+       Top10_union  = tab_sel,
+       Consensus    = consensus),
+  setNames(lapply(methods, top_df), paste0("Top_", gsub("-", "_", methods)))
+)
+
+writexl::write_xlsx(sheets, "manuscript/Table-3.xlsx")
+```
