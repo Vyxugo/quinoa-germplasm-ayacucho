@@ -321,10 +321,22 @@ tabsmr %>% web_table(scrolly = "400px")
 
 ```{r, echo=FALSE}
 
-info %>% dplyr::count(tipo)
-info %>% dplyr::filter(Acronym %in% c("LOD","NPB","NLT","PTL","MLL","MLW","SYP","PH","SD","PLr","PDr","GD","TSW")) %>%
-  dplyr::distinct(Acronym, tipo, descripcion_en)
+# info %>% dplyr::count(tipo)
+# info %>% dplyr::filter(Acronym %in% c("LOD","NPB","NLT","PTL","MLL","MLW","SYP","PH","SD","PLr","PDr","GD","TSW")) %>%
+#   dplyr::distinct(Acronym, tipo, descripcion_en)
 
+passport_data <- gs %>% 
+  range_read(ss = .,sheet ="passport_data")
+
+# machs en passport-----
+blues <- blues %>%
+  dplyr::left_join(
+    passport_data %>% dplyr::select(Trat, CODIGO),
+    by = c("geno" = "Trat")
+  ) %>%
+  dplyr::mutate(geno = CODIGO) %>%
+  dplyr::select(-CODIGO)
+#---------------------------
 
 bluesmeans <- blues
 
@@ -386,25 +398,27 @@ writexl::write_xlsx(rl, "manuscript/Table-2.xlsx")
 ```
 
 
-# Objective 2: To identify promising accessions using BLUEs of five agronomic traits and to compare five selection approaches.
+# Objective 2: To identify promising accessions using BLUEs of four agronomic traits and to compare five selection approaches.
 
 ## Data preparation
 
-The BLUEs of five traits (SYP, TSW, PH, PLr, LOD) were used for the 144 accessions. Negative BLUEs of LOD were set to zero. Traits were rescaled to 0–1 so that higher values are always better: LOD is inverted, and PH is penalized by its distance to an optimal range (P25–P75). The top 10 % of accessions (n = 14) was retained by each method.
+The BLUEs of four traits (SYP, TSW, PH, PLr) were used for the 144 accessions. Traits were rescaled to 0–1 so that higher values are always better: PH is penalized by its distance to an optimal range (P25–P75) and then inverted. The top 10 % of accessions (n = 14) was retained by each method.
 
 ```{r, echo=FALSE}
-vars5 <- c("SYP", "TSW", "PH", "PLr", "LOD")
+
+vars4 <- c("SYP", "TSW", "PH", "PLr")
+
 
 dat <- blues |>
-  dplyr::select(geno, dplyr::all_of(vars5)) |>
-  dplyr::mutate(LOD = pmax(LOD, 0))
+  dplyr::select(geno, dplyr::all_of(vars4))
 stopifnot(nrow(dat) == 144, !anyNA(dat))
 
-dat5  <- tibble::column_to_rownames(as.data.frame(dat), "geno")
+
+dat4  <- tibble::column_to_rownames(as.data.frame(dat), "geno")
 n_top <- round(0.10 * nrow(dat))
 
-w <- c(SYP = 3, TSW = 2, PH = 1, PLr = 1, LOD = 1)
-w <- (w / sum(w))[vars5]
+w <- c(SYP = 3, TSW = 2, PH = 1, PLr = 1)
+w <- (w / sum(w))[vars4]
 
 ph_rng <- quantile(dat$PH, c(0.25, 0.75))
 ph_pen <- pmax(ph_rng[[1]] - dat$PH, 0) + pmax(dat$PH - ph_rng[[2]], 0)
@@ -412,7 +426,7 @@ mm <- \(x) (x - min(x)) / (max(x) - min(x))
 
 M <- dat |>
   dplyr::mutate(PH = ph_pen, dplyr::across(-geno, mm),
-                dplyr::across(c(PH, LOD), \(x) 1 - x)) |>
+                PH = 1 - PH) |>
   tibble::column_to_rownames("geno")
 
 scores  <- tibble::tibble(geno = dat$geno)
@@ -426,7 +440,7 @@ top_df <- function(method) {
     dplyr::select(Rank, Accession = geno, Score = dplyr::all_of(method)) |>
     dplyr::left_join(dat, by = c("Accession" = "geno")) |>
     dplyr::mutate(Score = signif(Score, 4),
-                  dplyr::across(dplyr::all_of(vars5), \(x) round(x, 2)))
+                  dplyr::across(dplyr::all_of(vars4), \(x) round(x, 2)))
 }
 
 web_table <- function(x, caption = NULL) {
@@ -452,7 +466,7 @@ plot_top <- function(method, title) {
 PCA was run on the standardized BLUEs. The first principal component, oriented so that SYP loads positively, was used as the selection score.
 
 ```{r, echo=FALSE}
-mv <- FactoMineR::PCA(dat5, scale.unit = TRUE, graph = FALSE)
+mv <- FactoMineR::PCA(dat4, scale.unit = TRUE, graph = FALSE)
 
 scores$PCA <- as.numeric(mv$ind$coord[as.character(dat$geno), 1] *
                          sign(mv$var$coord["SYP", 1]))
@@ -463,15 +477,15 @@ top_df("PCA") |> web_table(caption = "Top 10 % accessions by PCA (PC1 score)")
 
 ## Elston index
 
-The Elston (1963) index was computed with `st4gi::elston()`, as in the F7 selection stage of Lozano-Isla et al. (2023). It is a weight-free index on standardized trait means, so traits to be minimized (the PH penalty and LOD) are multiplied by −1 before the calculation. The index is used here with yield, plant height and lodging.
+The Elston (1963) index was computed with `st4gi::elston()`, as in the F7 selection stage of Lozano-Isla et al. (2023). It is a weight-free index on standardized trait means, so the trait to be minimized (the PH penalty) is multiplied by −1 before the calculation. The index is used here with yield and plant height.
 
 ```{r, echo=FALSE}
 elston_df <- data.frame(geno = as.character(dat$geno), SYP = dat$SYP,
-                        PH = -ph_pen, LOD = -dat$LOD)
+                        PH = -ph_pen)
 
 elst <- tryCatch(
-  st4gi::elston(traits = c("SYP", "PH", "LOD"), geno = "geno", dfr = elston_df),
-  error = \(e) st4gi::elston(elston_df, vars = c("SYP", "PH", "LOD"), geno = "geno")
+  st4gi::elston(traits = c("SYP", "PH"), geno = "geno", dfr = elston_df),
+  error = \(e) st4gi::elston(elston_df, vars = c("SYP", "PH"), geno = "geno")
 )
 
 idx_col <- grep("index", names(elst), ignore.case = TRUE)[1]
@@ -490,7 +504,7 @@ top_df("Elston") |> web_table(caption = "Top 10 % accessions by Elston index")
 
 ## Mulamba–Mock index
 
-Accessions were ranked for each oriented trait (rank 1 = best) and the ranks were combined as a weighted sum, with weights of 3 for SYP, 2 for TSW and 1 for the remaining traits.
+Accessions were ranked for each oriented trait (rank 1 = best) and the ranks were combined as a weighted sum, with weights of 3 for SYP, 2 for TSW and 1 for PH and PLr.
 
 ```{r, echo=FALSE}
 rmat <- apply(M, 2, \(x) rank(-x, ties.method = "average"))
@@ -502,7 +516,7 @@ top_df("Mulamba-Mock") |> web_table(caption = "Top 10 % accessions by Mulamba-Mo
 
 ## Distance to the ideotype
 
-The ideotype takes the best value of every oriented trait (maximum for SYP, TSW and PLr; P25–P75 range for PH; minimum for LOD). Accessions were scored by the negative weighted Euclidean distance to it.
+The ideotype takes the best value of every oriented trait (maximum for SYP, TSW and PLr; P25–P75 range for PH). Accessions were scored by the negative weighted Euclidean distance to it.
 
 ```{r, echo=FALSE}
 scores$Ideotype <- -sqrt(rowSums(sweep((1 - as.matrix(M))^2, 2, w, "*")))
@@ -510,7 +524,7 @@ scores$Ideotype <- -sqrt(rowSums(sweep((1 - as.matrix(M))^2, 2, w, "*")))
 M[as.character(top_df("Ideotype")$Accession), ] |>
   tibble::rownames_to_column("Accession") |>
   tidyr::pivot_longer(-Accession, names_to = "Trait", values_to = "Value") |>
-  dplyr::mutate(Trait = factor(Trait, levels = vars5)) |>
+  dplyr::mutate(Trait = factor(Trait, levels = vars4)) |>
   ggplot(aes(Trait, Accession, fill = Value)) +
   geom_tile(color = "white") +
   scale_fill_gradient(low = "white", high = "#2166AC", limits = c(0, 1)) +
@@ -521,11 +535,11 @@ top_df("Ideotype") |> web_table(caption = "Top 10 % accessions closest to the id
 
 ## Random forest
 
-A random forest (2000 trees) predicted SYP from the other four traits. The out-of-bag prediction was used as the selection score, and permutation importance ranks the traits.
+A random forest (2000 trees) predicted SYP from the other three traits. The out-of-bag prediction was used as the selection score, and permutation importance ranks the traits.
 
 ```{r, echo=FALSE}
 set.seed(123)
-rf <- ranger::ranger(SYP ~ ., data = dat[, vars5], num.trees = 2000,
+rf <- ranger::ranger(SYP ~ ., data = dat[, vars4], num.trees = 2000,
                      importance = "permutation", seed = 123)
 scores$RF <- rf$predictions
 
@@ -560,14 +574,14 @@ ov   <- sapply(methods, \(a) sapply(methods, \(b)
 
 sd_tab <- sapply(methods, \(m) {
   sel <- dat$geno %in% tops[[m]]
-  sapply(vars5, \(v) (mean(dat[[v]][sel]) - mean(dat[[v]])) / sd(dat[[v]]))
+  sapply(vars4, \(v) (mean(dat[[v]][sel]) - mean(dat[[v]])) / sd(dat[[v]]))
 }) |> round(2)
 
 freq <- table(unlist(tops))
 consensus <- tibble::tibble(Accession = names(freq), N_methods = as.integer(freq)) |>
   dplyr::filter(N_methods >= 3) |>
   dplyr::left_join(dat, by = c("Accession" = "geno")) |>
-  dplyr::mutate(dplyr::across(dplyr::all_of(vars5), \(x) round(x, 2))) |>
+  dplyr::mutate(dplyr::across(dplyr::all_of(vars4), \(x) round(x, 2))) |>
   dplyr::arrange(dplyr::desc(N_methods))
 ```
 
@@ -589,7 +603,7 @@ cons  <- as.integer(n_sel[as.character(scores$geno)]) >= 3
 
 dir.create("files", showWarnings = FALSE)
 
-jpeg("files/Fig_pearson.jpg", width = 25, height = 25, units = "cm", res = 300)
+jpeg("manuscript/Figure_4.jpg", width = 25, height = 25, units = "cm", res = 300)
 psych::pairs.panels(
   sc,
   bg       = c("grey80", "#B2182B")[cons + 1],
@@ -602,7 +616,7 @@ psych::pairs.panels(
 )
 invisible(dev.off())
 
-knitr::include_graphics("files/Fig_pearson.jpg")
+knitr::include_graphics("manuscript/Figure_4.jpg")
 ```
 
 ```{r, echo=FALSE}
@@ -616,27 +630,82 @@ tab_pe |> web_table(caption = "Pearson correlation between selection scores")
 ### Coincidencias entre las 14 accesiones seleccionadas
 
 ```{r, echo=FALSE}
-as.data.frame(as.table(ov)) |>
+p_ov <- as.data.frame(as.table(ov)) |>
   ggplot(aes(Var1, Var2, fill = Freq)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = Freq)) +
-  scale_fill_gradient(low = "white", high = "#2166AC") +
-  labs(x = NULL, y = NULL, fill = "Shared") +
-  theme_minimal()
+  geom_tile(color = "white", linewidth = 0.3) +
+  geom_text(aes(label = Freq), size = 3) +
+  scale_fill_gradient(
+    low = "white",
+    high = "#2166AC",
+    name = "Shared"
+  ) +
+  labs(x = NULL, y = NULL, tag = "A") +
+  theme_classic(base_size = 11) +
+  theme(
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text.x = element_text(
+      angle = 45, hjust = 1, vjust = 1
+    ),
+    panel.border = element_blank(),
+    plot.tag = element_text(face = "bold", size = 13),
+    plot.margin = margin(8, 8, 20, 8),
+    legend.position = "right"
+  )
+p_ov
 ```
 
 ### Diferencial de selección
 
 ```{r, echo=FALSE}
-as.data.frame(as.table(sd_tab)) |>
-  dplyr::mutate(Var1 = factor(Var1, levels = rev(vars5))) |>
+
+p_sd <- as.data.frame(as.table(sd_tab)) |>
+  mutate(Var1 = factor(Var1, levels = rev(vars4))) |>
   ggplot(aes(Var2, Var1, fill = Freq)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = Freq)) +
-  scale_fill_gradient2(low = "#B2182B", mid = "white", high = "#2166AC") +
-  labs(x = NULL, y = NULL, fill = "Std. diff.") +
-  theme_minimal()
+  geom_tile(color = "white", linewidth = 0.3) +
+  geom_text(aes(label = round(Freq, 2)), size = 3) +
+  scale_fill_gradient2(
+    low = "#B2182B",
+    mid = "white",
+    high = "#2166AC",
+    midpoint = 0,
+    name = "Std. diff."
+  ) +
+  labs(x = NULL, y = NULL, tag = "B") +
+  theme_classic(base_size = 11) +
+  theme(
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text.x = element_text(
+      angle = 45, hjust = 1, vjust = 1
+    ),
+    panel.border = element_blank(),
+    plot.tag = element_text(face = "bold", size = 13),
+    plot.margin = margin(8, 8, 20, 8),
+    legend.position = "right"
+  )
+p_sd 
+
+p_final <- plot_grid(
+  p_ov, p_sd,
+  nrow = 1,
+  rel_widths = c(1, 1.1),
+  align = "h"
+)
+
+
+ggsave(
+  filename = "manuscript/Figure_3.jpg",
+  plot = p_final,
+  width = 15,
+  height = 6,
+  units = "in",
+  dpi = 600,
+  bg = "white"
+)
 ```
+
+
 
 ## Top 10 % accessions of all methods
 
@@ -657,20 +726,17 @@ tab_sel <- tibble::tibble(Accession = acc, N_methods = rowSums(sel_mat)) |>
   dplyr::bind_cols(tibble::as_tibble(ifelse(sel_mat, "✓", ""))) |>
   dplyr::left_join(dplyr::mutate(dat, geno = as.character(geno)),
                    by = c("Accession" = "geno")) |>
-  dplyr::mutate(dplyr::across(dplyr::all_of(vars5), \(x) round(x, 2))) |>
+  dplyr::mutate(dplyr::across(dplyr::all_of(vars4), \(x) round(x, 2))) |>
   dplyr::arrange(dplyr::desc(N_methods), Accession)
 
 tab_sel |> web_table(caption = "Accessions in the top 10 % of at least one method")
 ```
 
+
 ```{r, echo=FALSE}
-#| label: tab-consenso
-consensus |> web_table(caption = "Accessions selected by at least three methods")
-```
 
 ## Supplementary Excel
 
-```{r, echo=FALSE}
 #| label: excel
 dir.create("manuscript", showWarnings = FALSE)
 
@@ -689,3 +755,56 @@ sheets <- c(
 
 writexl::write_xlsx(sheets, "manuscript/Table-3.xlsx")
 ```
+
+
+# Final table
+
+Qualitative descriptors (28, acronyms as column names) and quantitative BLUEs (13) for the 144 accessions.
+
+```{r, echo=FALSE}
+quali_fin <- quali |>
+  dplyr::mutate(geno = as.character(geno)) |>
+  dplyr::left_join(
+    passport_data |>
+      dplyr::mutate(Trat = as.character(Trat)) |>
+      dplyr::select(Trat, CODIGO),
+    by = c("geno" = "Trat")
+  ) |>
+  dplyr::mutate(geno = CODIGO) |>
+  dplyr::select(-CODIGO)
+
+blues_fin <- blues |>
+  dplyr::mutate(
+    geno = as.character(geno),
+    dplyr::across(-geno, ~ ifelse(.x < 0, 0, .x)),
+    dplyr::across(-geno, ~ round(.x, 2))
+  )
+
+final_tab <- quali_fin |>
+  dplyr::left_join(blues_fin, by = "geno") |>
+  dplyr::rename(Accession = geno)
+
+n_quali  <- ncol(quali_fin) - 1    
+n_quanti <- ncol(blues_fin) - 1    
+
+stopifnot(
+  nrow(final_tab) == 144,
+  !anyNA(final_tab$Accession),
+  !anyDuplicated(final_tab$Accession),
+  n_quali  == 28,
+  n_quanti == 13,
+  ncol(final_tab) == 1 + 28 + 13,
+  !"PHS" %in% names(final_tab)
+)
+
+message("Qualitative: ", n_quali,
+        " | Quantitative: ", n_quanti,
+        " | Total traits: ", n_quali + n_quanti,
+        " | Total columns: ", ncol(final_tab))
+
+final_tab |> web_table(caption = "Final table: qualitative descriptors and quantitative BLUEs (144 accessions)")
+
+writexl::write_xlsx(final_tab, "files/Final-table.xlsx")
+```
+
+# END
