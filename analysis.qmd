@@ -402,11 +402,11 @@ writexl::write_xlsx(rl, "manuscript/Table-2.xlsx")
 
 ## Data preparation
 
-The BLUEs of four traits (SYP, TSW, PH, PLr) were used for the 144 accessions. Traits were rescaled to 0–1 so that higher values are always better: PH is penalized by its distance to an optimal range (P25–P75) and then inverted. The top 10 % of accessions (n = 14) was retained by each method.
+The BLUEs of four traits (SYP, TSW, PH, SD) were used for the 144 accessions. Traits were rescaled to 0–1 so that higher values are always better: PH is penalized by its distance to an optimal range (P25–P75) and then inverted. The top 10 % of accessions (n = 14) was retained by each method.
 
 ```{r, echo=FALSE}
 
-vars4 <- c("SYP", "TSW", "PH", "PLr")
+vars4 <- c("SYP", "TSW", "PH", "SD")
 
 
 dat <- blues |>
@@ -417,7 +417,7 @@ stopifnot(nrow(dat) == 144, !anyNA(dat))
 dat4  <- tibble::column_to_rownames(as.data.frame(dat), "geno")
 n_top <- round(0.10 * nrow(dat))
 
-w <- c(SYP = 3, TSW = 2, PH = 1, PLr = 1)
+w <- c(SYP = 3, TSW = 2, PH = 1, SD = 1)
 w <- (w / sum(w))[vars4]
 
 ph_rng <- quantile(dat$PH, c(0.25, 0.75))
@@ -504,7 +504,7 @@ top_df("Elston") |> web_table(caption = "Top 10 % accessions by Elston index")
 
 ## Mulamba–Mock index
 
-Accessions were ranked for each oriented trait (rank 1 = best) and the ranks were combined as a weighted sum, with weights of 3 for SYP, 2 for TSW and 1 for PH and PLr.
+Accessions were ranked for each oriented trait (rank 1 = best) and the ranks were combined as a weighted sum, with weights of 3 for SYP, 2 for TSW and 1 for PH and SD.
 
 ```{r, echo=FALSE}
 rmat <- apply(M, 2, \(x) rank(-x, ties.method = "average"))
@@ -516,7 +516,7 @@ top_df("Mulamba-Mock") |> web_table(caption = "Top 10 % accessions by Mulamba-Mo
 
 ## Distance to the ideotype
 
-The ideotype takes the best value of every oriented trait (maximum for SYP, TSW and PLr; P25–P75 range for PH). Accessions were scored by the negative weighted Euclidean distance to it.
+The ideotype takes the best value of every oriented trait (maximum for SYP, TSW and SD; P25–P75 range for PH). Accessions were scored by the negative weighted Euclidean distance to it.
 
 ```{r, echo=FALSE}
 scores$Ideotype <- -sqrt(rowSums(sweep((1 - as.matrix(M))^2, 2, w, "*")))
@@ -732,6 +732,81 @@ tab_sel <- tibble::tibble(Accession = acc, N_methods = rowSums(sel_mat)) |>
 tab_sel |> web_table(caption = "Accessions in the top 10 % of at least one method")
 ```
 
+```{r, echo=FALSE}
+vars_imp <- c("PCC", "PD", "GH", "PS")
+lab_imp  <- c(PCC = "Grain (pericarp) color", PD = "Panicle density",
+              GH = "Growth habit", PS = "Panicle shape")
+
+# 14 best accessions: most methods, then best mean rank
+top14 <- tibble::tibble(Accession = acc, N_methods = rowSums(sel_mat)) |>
+  dplyr::left_join(
+    ranks |> dplyr::transmute(Accession = as.character(geno),
+                              mean_rank = rowMeans(dplyr::across(dplyr::all_of(methods)))),
+    by = "Accession") |>
+  dplyr::arrange(dplyr::desc(N_methods), mean_rank) |>
+  dplyr::slice_head(n = n_top)
+
+tab_sel <- top14 |>
+  dplyr::select(Accession) |>
+  dplyr::left_join(
+    dplyr::mutate(dat, geno = as.character(geno)) |> dplyr::select(geno, dplyr::all_of(vars4)),
+    by = c("Accession" = "geno")) |>
+  dplyr::mutate(dplyr::across(dplyr::all_of(vars4), \(x) round(x, 2)))
+
+quali_cod <- quali |>
+  dplyr::mutate(Trat = as.character(geno)) |>
+  dplyr::left_join(
+    dplyr::mutate(passport_data, Trat = as.character(Trat)) |> dplyr::select(Trat, CODIGO),
+    by = "Trat") |>
+  dplyr::transmute(Accession = as.character(CODIGO),
+                   dplyr::across(dplyr::all_of(vars_imp), as.character)) |>
+  dplyr::distinct(Accession, .keep_all = TRUE)
+
+tab_quali <- dplyr::left_join(tab_sel, quali_cod, by = "Accession")
+stopifnot(nrow(tab_quali) == 14)
+
+tab_quali |> web_table(caption = "Top 14 accessions: quantitative and key qualitative traits")
+writexl::write_xlsx(list(Quant_Quali = tab_quali), "files/Table-selected.xlsx")
+
+# Figure
+pal <- c(PCC = "#D9A441", PD = "#2166AC", GH = "#4D9221", PS = "#B2182B")
+
+mk_panel <- function(v) {
+  d <- tab_quali |>
+    dplyr::count(Class = .data[[v]]) |>
+    dplyr::filter(!is.na(Class)) |>
+    dplyr::mutate(Class = reorder(Class, n),
+                  lab   = sprintf("%d (%.0f%%)", n, n / 14 * 100))
+
+  ggplot(d, aes(n, Class)) +
+    geom_col(fill = pal[[v]], width = 0.85) +
+    geom_text(aes(label = lab), hjust = -0.15, size = 3.8) +
+    scale_y_discrete(expand = expansion(add = c(0, 0.30 * nrow(d))),
+                     labels = \(x) stringr::str_wrap(x, 20)) +
+    scale_x_continuous(expand = c(0, 0), limits = c(0, 17), breaks = seq(0, 14, 2)) +
+    labs(title = lab_imp[[v]], x = "Number of accessions (n = 14)", y = NULL) +
+    theme_bw(base_size = 12) +
+    theme(plot.title        = element_text(face = "bold", hjust = 0.5, size = 13),
+          panel.border      = element_rect(color = "black", fill = NA, linewidth = 0.9),
+          panel.grid.major  = element_line(color = "grey90", linewidth = 0.4),
+          panel.grid.minor  = element_blank(),
+          axis.ticks        = element_line(color = "black"),
+          axis.ticks.length = unit(0.18, "cm"),
+          axis.text         = element_text(color = "black"),
+          axis.title        = element_text(size = 11),
+          plot.margin       = margin(8, 12, 8, 8))
+}
+
+p_prof <- cowplot::plot_grid(
+  plotlist = lapply(vars_imp, mk_panel),
+  labels = c("a", "b", "c", "d"), label_size = 18, label_fontface = "bold",
+  ncol = 2, align = "hv", axis = "tblr"
+)
+
+p_prof
+ggsave("files/Figure_1.jpg", p_prof, width = 11, height = 7.5, units = "in", dpi = 600, bg = "white")
+```
+
 
 ```{r, echo=FALSE}
 
@@ -780,12 +855,29 @@ blues_fin <- blues |>
     dplyr::across(-geno, ~ round(.x, 2))
   )
 
+# passport data (one row per accession, English headers)
+pass_fin <- passport_data |>
+  dplyr::transmute(
+    Accession        = as.character(CODIGO),
+    `Collection date` = as.character(`Fecha de colección`),
+    Country          = as.character(`País`),
+    Department       = as.character(Departamento),
+    Province         = as.character(Provincia),
+    District         = as.character(Distrito),
+    Locality         = as.character(Localidad),
+    `Altitude (masl)` = `Altitud (msnm)`
+  ) |>
+  dplyr::distinct(Accession, .keep_all = TRUE)
+
 final_tab <- quali_fin |>
   dplyr::left_join(blues_fin, by = "geno") |>
-  dplyr::rename(Accession = geno)
+  dplyr::rename(Accession = geno) |>
+  dplyr::left_join(pass_fin, by = "Accession") |>
+  dplyr::relocate(names(pass_fin)[-1], .after = Accession)
 
-n_quali  <- ncol(quali_fin) - 1    
-n_quanti <- ncol(blues_fin) - 1    
+n_quali  <- ncol(quali_fin) - 1
+n_quanti <- ncol(blues_fin) - 1
+n_pass   <- ncol(pass_fin) - 1
 
 stopifnot(
   nrow(final_tab) == 144,
@@ -793,16 +885,12 @@ stopifnot(
   !anyDuplicated(final_tab$Accession),
   n_quali  == 28,
   n_quanti == 13,
-  ncol(final_tab) == 1 + 28 + 13,
+  n_pass   == 7,
+  ncol(final_tab) == 1 + 7 + 28 + 13,
   !"PHS" %in% names(final_tab)
 )
 
-message("Qualitative: ", n_quali,
-        " | Quantitative: ", n_quanti,
-        " | Total traits: ", n_quali + n_quanti,
-        " | Total columns: ", ncol(final_tab))
-
-final_tab |> web_table(caption = "Final table: qualitative descriptors and quantitative BLUEs (144 accessions)")
+final_tab |> web_table(caption = "Final table: passport data, qualitative descriptors and quantitative BLUEs (144 accessions)")
 
 writexl::write_xlsx(final_tab, "files/Final-table.xlsx")
 ```
