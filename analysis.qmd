@@ -223,7 +223,7 @@ Diversity |> web_table(scrolly = "400px")
 writexl::write_xlsx(Diversity, "files/STable-1.xlsx")
 
 
-# 5. Tabla 1 resumida (una fila por carácter cualitativo)
+# 5. Tabla 1 
 
 se_  <- \(x) sd(x) / sqrt(length(x))
 tq   <- stats::qt(0.975, df = nrow(div_tab) - 1)
@@ -241,7 +241,6 @@ Diversity <- div_tab |>
   ) |>
   dplyr::mutate(Nc = as.character(Nc))
 
-# Fila de promedios
 mrow <- tibble::tibble(
   `Qualitative trait` = "Mean ± SE",
   Nc          = sprintf("%.2f ± %.2f", mean(div_tab$Nc), se_(div_tab$Nc)),
@@ -591,7 +590,7 @@ consensus <- tibble::tibble(Accession = names(freq), N_methods = as.integer(freq
 corrplot::corrplot(sp, method = "color", type = "upper", addCoef.col = "black",
                    tl.col = "black", tl.srt = 45, is.corr = FALSE,
                    col = colorRampPalette(c("#B2182B", "white", "#2166AC"))(200),
-                   cl.lim = c(min(sp), 1))
+                   col.lim = c(min(sp), 1))
 ```
 
 ### Correlación de Pearson entre puntuaciones
@@ -603,7 +602,7 @@ cons  <- as.integer(n_sel[as.character(scores$geno)]) >= 3
 
 dir.create("files", showWarnings = FALSE)
 
-jpeg("manuscript/Figure_4.jpg", width = 25, height = 25, units = "cm", res = 300)
+jpeg("manuscript/Figure_5.jpg", width = 25, height = 25, units = "cm", res = 300)
 psych::pairs.panels(
   sc,
   bg       = c("grey80", "#B2182B")[cons + 1],
@@ -616,7 +615,7 @@ psych::pairs.panels(
 )
 invisible(dev.off())
 
-knitr::include_graphics("manuscript/Figure_4.jpg")
+knitr::include_graphics("manuscript/Figure_5.jpg")
 ```
 
 ```{r, echo=FALSE}
@@ -630,81 +629,77 @@ tab_pe |> web_table(caption = "Pearson correlation between selection scores")
 ### Coincidencias entre las 14 accesiones seleccionadas
 
 ```{r, echo=FALSE}
+library(patchwork)
+
+# ---- Panel a: traslape top 10 % ----
 p_ov <- as.data.frame(as.table(ov)) |>
   ggplot(aes(Var1, Var2, fill = Freq)) +
   geom_tile(color = "white", linewidth = 0.3) +
-  geom_text(aes(label = Freq), size = 3) +
-  scale_fill_gradient(
-    low = "white",
-    high = "#2166AC",
-    name = "Shared"
-  ) +
-  labs(x = NULL, y = NULL, tag = "A") +
-  theme_classic(base_size = 11) +
+  geom_text(aes(label = Freq), size = 4.5) +
+  scale_fill_gradient(low = "white", high = "#2166AC", name = "Shared") +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  labs(x = NULL, y = NULL, tag = "a") +
+  theme_classic(base_size = 16) +
   theme(
-    axis.line = element_blank(),
-    axis.ticks = element_blank(),
-    axis.text.x = element_text(
-      angle = 45, hjust = 1, vjust = 1
-    ),
-    panel.border = element_blank(),
-    plot.tag = element_text(face = "bold", size = 13),
-    plot.margin = margin(8, 8, 20, 8),
-    legend.position = "right"
+    axis.line         = element_blank(),
+    axis.ticks        = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    axis.text.x       = element_text(angle = 45, hjust = 1, vjust = 1,
+                                     margin = margin(t = 1)),
+    axis.text.y       = element_text(margin = margin(r = 1)),
+    panel.border      = element_blank(),
+    plot.tag          = element_text(face = "bold", size = 13),
+    plot.margin       = margin(8, 8, 8, 8),
+    legend.position   = "right"
   )
 p_ov
-```
-
-### Diferencial de selección
-
-```{r, echo=FALSE}
-
+# ---- Panel b: diferencial de selección ----
 p_sd <- as.data.frame(as.table(sd_tab)) |>
-  mutate(Var1 = factor(Var1, levels = rev(vars4))) |>
+  dplyr::mutate(Var1 = factor(Var1, levels = rev(vars4))) |>
   ggplot(aes(Var2, Var1, fill = Freq)) +
   geom_tile(color = "white", linewidth = 0.3) +
-  geom_text(aes(label = round(Freq, 2)), size = 3) +
+  geom_text(aes(label = round(Freq, 2)), size = 4.5) +
   scale_fill_gradient2(
-    low = "#B2182B",
-    mid = "white",
-    high = "#2166AC",
-    midpoint = 0,
-    name = "Std. diff."
+    low = "#B2182B", mid = "white", high = "#2166AC",
+    midpoint = 0, name = "Std. diff."
   ) +
-  labs(x = NULL, y = NULL, tag = "B") +
-  theme_classic(base_size = 11) +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  labs(x = NULL, y = NULL, tag = "b") +
+  theme_classic(base_size = 16) +
   theme(
-    axis.line = element_blank(),
-    axis.ticks = element_blank(),
-    axis.text.x = element_text(
-      angle = 45, hjust = 1, vjust = 1
-    ),
-    panel.border = element_blank(),
-    plot.tag = element_text(face = "bold", size = 13),
-    plot.margin = margin(8, 8, 20, 8),
-    legend.position = "right"
+    axis.line         = element_blank(),
+    axis.ticks        = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    axis.text.x       = element_text(angle = 45, hjust = 1, vjust = 1,
+                                     margin = margin(t = 1)),
+    axis.text.y       = element_text(margin = margin(r = 1)),
+    panel.border      = element_blank(),
+    plot.tag          = element_text(face = "bold", size = 13),
+    plot.margin       = margin(8, 8, 8, 8),
+    legend.position   = "right"
   )
 p_sd 
 
-p_final <- plot_grid(
-  p_ov, p_sd,
-  nrow = 1,
-  rel_widths = c(1, 1.1),
-  align = "h"
-)
+p_final <- p_ov + p_sd +
+  plot_layout(ncol = 2, widths = c(1, 1), heights = c(1, 1))
 
 
 ggsave(
-  filename = "manuscript/Figure_3.jpg",
-  plot = p_final,
-  width = 15,
-  height = 6,
-  units = "in",
-  dpi = 600,
-  bg = "white"
+  filename = "manuscript/Figure_4.jpg",
+  plot     = p_final,
+  width    = 20,
+  height   = 15,
+  units    = "in",
+  dpi      = 600,
+  bg       = "white"
 )
-```
 
+img <- magick::image_read("manuscript/Figure_4.jpg")
+img <- magick::image_trim(img)
+magick::image_write(img, "manuscript/Figure_4.jpg", quality = 100)
+```
 
 
 ## Top 10 % accessions of all methods
@@ -718,57 +713,84 @@ tab_top <- purrr::map(methods, \(m) as.character(top_df(m)$Accession)) |>
 tab_top |> web_table(caption = "Top 10 % accessions by selection method (rank order)")
 ```
 
-```{r, echo=FALSE}
+```{r}
+#| label: top10-union
+#| echo: false
 acc     <- sort(unique(as.character(unlist(tops))))
 sel_mat <- sapply(methods, \(m) acc %in% as.character(tops[[m]]))
 
-tab_sel <- tibble::tibble(Accession = acc, N_methods = rowSums(sel_mat)) |>
-  dplyr::bind_cols(tibble::as_tibble(ifelse(sel_mat, "✓", ""))) |>
+mean_rk <- ranks |>
+  dplyr::transmute(Accession = as.character(geno),
+                   mean_rank = rowMeans(dplyr::across(dplyr::all_of(methods))))
+
+ticks <- tibble::tibble(Accession = acc) |>
+  dplyr::bind_cols(tibble::as_tibble(ifelse(sel_mat, "✓", "")))
+
+tab_union <- tibble::tibble(Accession = acc, N_methods = rowSums(sel_mat)) |>
+  dplyr::left_join(mean_rk, by = "Accession") |>
+  dplyr::left_join(ticks,   by = "Accession") |>
   dplyr::left_join(dplyr::mutate(dat, geno = as.character(geno)),
                    by = c("Accession" = "geno")) |>
   dplyr::mutate(dplyr::across(dplyr::all_of(vars4), \(x) round(x, 2))) |>
-  dplyr::arrange(dplyr::desc(N_methods), Accession)
+  dplyr::arrange(dplyr::desc(N_methods), mean_rank)
 
-tab_sel |> web_table(caption = "Accessions in the top 10 % of at least one method")
+tab_union |> web_table(caption = "Accessions in the top 10 % of at least one method")
+
 ```
 
-```{r, echo=FALSE}
+```{r}
+#| label: top14-methods
+#| echo: false
 vars_imp <- c("PCC", "PD", "GH", "PS")
 lab_imp  <- c(PCC = "Grain (pericarp) color", PD = "Panicle density",
               GH = "Growth habit", PS = "Panicle shape")
 
-# 14 best accessions: most methods, then best mean rank
-top14 <- tibble::tibble(Accession = acc, N_methods = rowSums(sel_mat)) |>
-  dplyr::left_join(
-    ranks |> dplyr::transmute(Accession = as.character(geno),
-                              mean_rank = rowMeans(dplyr::across(dplyr::all_of(methods)))),
-    by = "Accession") |>
-  dplyr::arrange(dplyr::desc(N_methods), mean_rank) |>
-  dplyr::slice_head(n = n_top)
-
-tab_sel <- top14 |>
-  dplyr::select(Accession) |>
-  dplyr::left_join(
-    dplyr::mutate(dat, geno = as.character(geno)) |> dplyr::select(geno, dplyr::all_of(vars4)),
-    by = c("Accession" = "geno")) |>
-  dplyr::mutate(dplyr::across(dplyr::all_of(vars4), \(x) round(x, 2)))
+top14 <- tab_union |>
+  dplyr::slice_head(n = n_top)          
 
 quali_cod <- quali |>
   dplyr::mutate(Trat = as.character(geno)) |>
   dplyr::left_join(
-    dplyr::mutate(passport_data, Trat = as.character(Trat)) |> dplyr::select(Trat, CODIGO),
+    dplyr::mutate(passport_data, Trat = as.character(Trat)) |>
+      dplyr::select(Trat, CODIGO),
     by = "Trat") |>
   dplyr::transmute(Accession = as.character(CODIGO),
                    dplyr::across(dplyr::all_of(vars_imp), as.character)) |>
   dplyr::distinct(Accession, .keep_all = TRUE)
 
-tab_quali <- dplyr::left_join(tab_sel, quali_cod, by = "Accession")
-stopifnot(nrow(tab_quali) == 14)
+tab_quali <- top14 |>
+  dplyr::select(Accession, N_methods, dplyr::all_of(vars4)) |>
+  dplyr::left_join(quali_cod, by = "Accession")
 
+# Verificaciones
+stopifnot(nrow(tab_quali) == 14)
+stopifnot(identical(tab_quali$Accession, top14$Accession))
+if (anyNA(tab_quali[vars_imp])) {
+  warning("Accesiones sin dato cualitativo: ",
+          paste(tab_quali$Accession[!complete.cases(tab_quali[vars_imp])],
+                collapse = ", "))
+}
+
+dir.create("files", showWarnings = FALSE)
 tab_quali |> web_table(caption = "Top 14 accessions: quantitative and key qualitative traits")
 writexl::write_xlsx(list(Quant_Quali = tab_quali), "files/Table-selected.xlsx")
+```
 
-# Figure
+```{r}
+#| label: table3-final
+#| echo: false
+table3 <- top14 |>
+  dplyr::select(Accession, N = N_methods,
+                dplyr::all_of(methods), dplyr::all_of(vars4)) |>
+  dplyr::mutate(Accession = sub("UNSCHLGBVCHQ60405", "UNSCH", Accession))
+
+table3 |> web_table(caption = "Table 3")
+writexl::write_xlsx(list(Table3 = table3), "manuscript/Table-3.xlsx")
+```
+
+```{r}
+#| label: fig-profile
+#| echo: false
 pal <- c(PCC = "#D9A441", PD = "#2166AC", GH = "#4D9221", PS = "#B2182B")
 
 mk_panel <- function(v) {
@@ -804,31 +826,32 @@ p_prof <- cowplot::plot_grid(
 )
 
 p_prof
-ggsave("files/Figure_1.jpg", p_prof, width = 11, height = 7.5, units = "in", dpi = 600, bg = "white")
+ggsave("files/Figure_1.jpg", p_prof, width = 11, height = 7.5,
+       units = "in", dpi = 600, bg = "white")
 ```
 
-
-```{r, echo=FALSE}
-
-## Supplementary Excel
-
+```{r}
 #| label: excel
+#| echo: false
+## Supplementary Excel
 dir.create("manuscript", showWarnings = FALSE)
 
 sheets <- c(
-  list(Scores       = scores,
-       Ranks        = ranks,
-       Spearman     = tibble::as_tibble(round(sp, 2), rownames = "Method"),
-       Pearson      = tab_pe,
+  list(Scores        = scores,
+       Ranks         = ranks,
+       Spearman      = tibble::as_tibble(round(sp, 2), rownames = "Method"),
+       Pearson       = tab_pe,
        Top10_overlap = tibble::as_tibble(ov, rownames = "Method"),
-       Std_sel_diff = tibble::as_tibble(sd_tab, rownames = "Trait"),
-       Top10_wide   = tab_top,
-       Top10_union  = tab_sel,
-       Consensus    = consensus),
+       Std_sel_diff  = tibble::as_tibble(sd_tab, rownames = "Trait"),
+       Top10_wide    = tab_top,
+       Top10_union   = tab_union,
+       Top14_Table3  = table3,
+       Top14_Quali   = tab_quali,
+       Consensus     = consensus),
   setNames(lapply(methods, top_df), paste0("Top_", gsub("-", "_", methods)))
 )
 
-writexl::write_xlsx(sheets, "manuscript/Table-3.xlsx")
+writexl::write_xlsx(sheets, "files/Table-3.xlsx")
 ```
 
 
