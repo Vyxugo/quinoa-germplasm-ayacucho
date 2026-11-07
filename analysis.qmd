@@ -1,5 +1,5 @@
 ---
-title: "Diversidad agromorfológica de Chenopodium quinoa Willd. en condiciones altoandinas de Ayacucho, Perú "
+title: "Multi-trait selection of promising quinoa (Chenopodium quinoa Willd.) accessions in an Andean valley of Ayacucho, Peru "
 format:
   html:
     toc: true
@@ -401,7 +401,7 @@ writexl::write_xlsx(rl, "manuscript/Table-2.xlsx")
 
 ## Data preparation
 
-The BLUEs of four traits (SYP, TSW, PH, SD) were used for the 144 accessions. Traits were rescaled to 0–1 so that higher values are always better: PH is penalized by its distance to an optimal range (P25–P75) and then inverted. The top 10 % of accessions (n = 14) was retained by each method.
+The BLUEs of four traits (SYP, TSW, PH, SD) were used for the 144 accessions. Traits were rescaled to 0–1 so that higher values are always better: SYP, TSW and SD are maximized, whereas PH is entered as a negative penalty: its distance to an optimal intermediate range (P25–P75) is computed and then inverted, so that intermediate heights are favoured. The top 10 % of accessions (n = 14) was retained by each method.
 
 ```{r, echo=FALSE}
 
@@ -419,10 +419,12 @@ n_top <- round(0.10 * nrow(dat))
 w <- c(SYP = 3, TSW = 2, PH = 1, SD = 1)
 w <- (w / sum(w))[vars4]
 
+# PH penalty: distance to the optimal intermediate range (P25-P75); 0 inside the range
 ph_rng <- quantile(dat$PH, c(0.25, 0.75))
 ph_pen <- pmax(ph_rng[[1]] - dat$PH, 0) + pmax(dat$PH - ph_rng[[2]], 0)
 mm <- \(x) (x - min(x)) / (max(x) - min(x))
 
+# Direction: SYP, TSW, SD (+) | PH penalty (-)
 M <- dat |>
   dplyr::mutate(PH = ph_pen, dplyr::across(-geno, mm),
                 PH = 1 - PH) |>
@@ -462,10 +464,13 @@ plot_top <- function(method, title) {
 
 ## Principal component analysis
 
-PCA was run on the standardized BLUEs. The first principal component, oriented so that SYP loads positively, was used as the selection score.
+PCA was run on the standardized BLUEs, with PH replaced by its penalty (distance to P25–P75) multiplied by −1, so that intermediate plant height is favoured. The first principal component, oriented so that SYP loads positively, was used as the selection score.
 
 ```{r, echo=FALSE}
-mv <- FactoMineR::PCA(dat4, scale.unit = TRUE, graph = FALSE)
+dat4_o <- dat4
+dat4_o$PH <- -ph_pen             # PH penalty negative: intermediate height is best
+
+mv <- FactoMineR::PCA(dat4_o, scale.unit = TRUE, graph = FALSE)
 
 scores$PCA <- as.numeric(mv$ind$coord[as.character(dat$geno), 1] *
                          sign(mv$var$coord["SYP", 1]))
@@ -476,15 +481,16 @@ top_df("PCA") |> web_table(caption = "Top 10 % accessions by PCA (PC1 score)")
 
 ## Elston index
 
-The Elston (1963) index was computed with `st4gi::elston()`, as in the F7 selection stage of Lozano-Isla et al. (2023). It is a weight-free index on standardized trait means, so the trait to be minimized (the PH penalty) is multiplied by −1 before the calculation. The index is used here with yield and plant height.
+The Elston (1963) index was computed with `st4gi::elston()`, as in the F7 selection stage of Lozano-Isla et al. (2023). It is a weight-free index on standardized trait means, so the trait to be minimized (the PH penalty) is multiplied by −1 before the calculation. The index is used here with the four traits: SYP, TSW and SD are maximized and the PH penalty is minimized.
 
 ```{r, echo=FALSE}
-elston_df <- data.frame(geno = as.character(dat$geno), SYP = dat$SYP,
-                        PH = -ph_pen)
+elston_df <- data.frame(geno = as.character(dat$geno),
+                        SYP = dat$SYP, TSW = dat$TSW, SD = dat$SD,
+                        PH  = -ph_pen)          # PH penalty negative: intermediate height is best
 
 elst <- tryCatch(
-  st4gi::elston(traits = c("SYP", "PH"), geno = "geno", dfr = elston_df),
-  error = \(e) st4gi::elston(elston_df, vars = c("SYP", "PH"), geno = "geno")
+  st4gi::elston(traits = c("SYP", "TSW", "SD", "PH"), geno = "geno", dfr = elston_df),
+  error = \(e) st4gi::elston(elston_df, vars = c("SYP", "TSW", "SD", "PH"), geno = "geno")
 )
 
 idx_col <- grep("index", names(elst), ignore.case = TRUE)[1]
@@ -534,11 +540,14 @@ top_df("Ideotype") |> web_table(caption = "Top 10 % accessions closest to the id
 
 ## Random forest
 
-A random forest (2000 trees) predicted SYP from the other three traits. The out-of-bag prediction was used as the selection score, and permutation importance ranks the traits.
+A random forest (2000 trees) predicted the weighted selection index (SYP, TSW and SD positive; PH penalty negative) from the four traits, with PH entered as its penalty. The out-of-bag prediction was used as the selection score, and permutation importance ranks the traits.
 
 ```{r, echo=FALSE}
 set.seed(123)
-rf <- ranger::ranger(SYP ~ ., data = dat[, vars4], num.trees = 2000,
+rf_df <- data.frame(SYP = dat$SYP, TSW = dat$TSW, SD = dat$SD,
+                    PH  = ph_pen,                                  # PH penalty
+                    Index = as.numeric(as.matrix(M[, vars4]) %*% w))  # target: oriented weighted index
+rf <- ranger::ranger(Index ~ ., data = rf_df, num.trees = 2000,
                      importance = "permutation", seed = 123)
 scores$RF <- rf$predictions
 
@@ -549,7 +558,7 @@ tibble::tibble(Variable = names(rf$variable.importance),
   labs(x = NULL, title = paste0("OOB R² = ", round(rf$r.squared, 3))) +
   theme_minimal()
 
-top_df("RF") |> web_table(caption = "Top 10 % accessions by random forest (predicted SYP)")
+top_df("RF") |> web_table(caption = "Top 10 % accessions by random forest (predicted index)")
 ```
 
 ## Comparison among selection methods
