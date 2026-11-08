@@ -1,7 +1,8 @@
 ---
-title: "Diversidad agromorfológica de Chenopodium quinoa Willd. en condiciones altoandinas de Ayacucho, Perú "
+title: "Multi-trait selection of promising quinoa (Chenopodium quinoa Willd.) accessions in an Andean valley of Ayacucho, Peru"
 format:
   html:
+    css: "files/style.css"
     toc: true
     toc-expand: true
     toc-depth: 4
@@ -19,29 +20,26 @@ execute:
 
 # Project Setup
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 #| label: setup
+
+# pak::pak("reyzaguirre/st4gi")
+library(st4gi)
 library(factoextra)
-library(FactoMineR)
 library(vegan)
-library(dplyr)
-library(purrr)
 library(writexl) 
 library(cluster)
 library(pvclust)
-library(lme4)
-library(psych)
 library(plotly)
 library(corrplot)
 library(htmlwidgets)
-library(devtools)
 source('https://inkaverse.com/setup.r')
 
 ```
 
 # Data import
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 gs <- "https://docs.google.com/spreadsheets/d/14QZQZCEdy0XHK6dqiWQOjy-tU769x_KRhZ-7OyU9phw/edit?gid=1912323931#gid=1912323931" %>% 
   as_sheets_id()
 
@@ -50,7 +48,7 @@ date <- gs %>%
 
 ```
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
  info <- gs %>% 
   range_read(ss = .,sheet ="dictionary")
 
@@ -93,7 +91,7 @@ fb %>% web_table(scrolly = "400px")
 
 Na = number of accessions per class; Nc = observed classes; Ne = effective number of classes; He = Nei’s diversity index; H′ = Shannon–Weaver index.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 
 #  detector incoherence 
 dif <- fb |>
@@ -115,7 +113,7 @@ quali <- fb |>
 
 ```
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 
 # 1. Diccionario: acrónimo
 dic_q <- info |>
@@ -259,7 +257,7 @@ writexl::write_xlsx(Diversity, "manuscript/Table-1.xlsx")
 
 ## Morphological diversity based on quantitative descriptors
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 
 
 quanti <- fb |> dplyr::rename(
@@ -277,7 +275,7 @@ exp <- quanti
 
 ```
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 rslt <- 8:length(exp) %>% map(\(x) {
   
 trait <- names(exp)[x]
@@ -318,7 +316,7 @@ tabsmr %>% web_table(scrolly = "400px")
 
 ##  Tabla 2: Presents descriptive statistics for the quantitative traits evaluated in the blues dataset. For each trait, the table reports the mean, minimum, maximum, coefficient of variation (CV%) and broad-sense heritability (H²), providing a summary of the central tendency, range, relative variability and genetic determination of the measured characteristics.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 
 # info %>% dplyr::count(tipo)
 # info %>% dplyr::filter(Acronym %in% c("LOD","NPB","NLT","PTL","MLL","MLW","SYP","PH","SD","PLr","PDr","GD","TSW")) %>%
@@ -403,7 +401,7 @@ writexl::write_xlsx(rl, "manuscript/Table-2.xlsx")
 
 The BLUEs of four traits (SYP, TSW, PH, SD) were used for the 144 accessions. Traits were rescaled to 0–1 so that higher values are always better: PH is penalized by its distance to an optimal range (P25–P75) and then inverted. The top 10 % of accessions (n = 14) was retained by each method.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 
 vars4 <- c("SYP", "TSW", "PH", "SD")
 
@@ -464,7 +462,7 @@ plot_top <- function(method, title) {
 
 PCA was run on the standardized BLUEs. The first principal component, oriented so that SYP loads positively, was used as the selection score.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 mv <- FactoMineR::PCA(dat4, scale.unit = TRUE, graph = FALSE)
 
 scores$PCA <- as.numeric(mv$ind$coord[as.character(dat$geno), 1] *
@@ -478,7 +476,7 @@ top_df("PCA") |> web_table(caption = "Top 10 % accessions by PCA (PC1 score)")
 
 The Elston (1963) index was computed with `st4gi::elston()`, as in the F7 selection stage of Lozano-Isla et al. (2023). It is a weight-free index on standardized trait means, so the trait to be minimized (the PH penalty) is multiplied by −1 before the calculation. The index is used here with yield and plant height.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 elston_df <- data.frame(geno = as.character(dat$geno), SYP = dat$SYP,
                         PH = -ph_pen)
 
@@ -505,7 +503,7 @@ top_df("Elston") |> web_table(caption = "Top 10 % accessions by Elston index")
 
 Accessions were ranked for each oriented trait (rank 1 = best) and the ranks were combined as a weighted sum, with weights of 3 for SYP, 2 for TSW and 1 for PH and SD.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 rmat <- apply(M, 2, \(x) rank(-x, ties.method = "average"))
 scores$`Mulamba-Mock` <- -as.vector(rmat %*% w)
 
@@ -517,7 +515,7 @@ top_df("Mulamba-Mock") |> web_table(caption = "Top 10 % accessions by Mulamba-Mo
 
 The ideotype takes the best value of every oriented trait (maximum for SYP, TSW and SD; P25–P75 range for PH). Accessions were scored by the negative weighted Euclidean distance to it.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 scores$Ideotype <- -sqrt(rowSums(sweep((1 - as.matrix(M))^2, 2, w, "*")))
 
 M[as.character(top_df("Ideotype")$Accession), ] |>
@@ -536,7 +534,7 @@ top_df("Ideotype") |> web_table(caption = "Top 10 % accessions closest to the id
 
 A random forest (2000 trees) predicted SYP from the other three traits. The out-of-bag prediction was used as the selection score, and permutation importance ranks the traits.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 set.seed(123)
 rf <- ranger::ranger(SYP ~ ., data = dat[, vars4], num.trees = 2000,
                      importance = "permutation", seed = 123)
@@ -556,7 +554,7 @@ top_df("RF") |> web_table(caption = "Top 10 % accessions by random forest (predi
 
 Agreement among methods was assessed with Spearman and Pearson correlations, the overlap of the top 10 %, and the standardized selection differential of each trait. Accessions chosen by at least three methods are reported as consensus selections.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 stopifnot(all(methods %in% names(scores)),
           all(sapply(scores[methods], \(x) all(is.finite(x)))))
 
@@ -586,7 +584,7 @@ consensus <- tibble::tibble(Accession = names(freq), N_methods = as.integer(freq
 
 ### Correlación de Spearman entre rankings
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 corrplot::corrplot(sp, method = "color", type = "upper", addCoef.col = "black",
                    tl.col = "black", tl.srt = 45, is.corr = FALSE,
                    col = colorRampPalette(c("#B2182B", "white", "#2166AC"))(200),
@@ -595,7 +593,7 @@ corrplot::corrplot(sp, method = "color", type = "upper", addCoef.col = "black",
 
 ### Correlación de Pearson entre puntuaciones
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 sc <- as.data.frame(scores[, methods])
 n_sel <- table(factor(unlist(tops), levels = scores$geno))
 cons  <- as.integer(n_sel[as.character(scores$geno)]) >= 3
@@ -618,7 +616,7 @@ invisible(dev.off())
 knitr::include_graphics("manuscript/Figure_5.jpg")
 ```
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 tab_pe <- round(pe, 2) |>
   as.data.frame() |>
   tibble::rownames_to_column("Method")
@@ -628,7 +626,7 @@ tab_pe |> web_table(caption = "Pearson correlation between selection scores")
 
 ### Coincidencias entre las 14 accesiones seleccionadas
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 library(patchwork)
 
 # ---- Panel a: traslape top 10 % ----
@@ -704,7 +702,7 @@ magick::image_write(img, "manuscript/Figure_4.jpg", quality = 100)
 
 ## Top 10 % accessions of all methods
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 tab_top <- purrr::map(methods, \(m) as.character(top_df(m)$Accession)) |>
   setNames(methods) |>
   tibble::as_tibble() |>
@@ -715,7 +713,7 @@ tab_top |> web_table(caption = "Top 10 % accessions by selection method (rank or
 
 ```{r}
 #| label: top10-union
-#| echo: false
+#| echo: true
 acc     <- sort(unique(as.character(unlist(tops))))
 sel_mat <- sapply(methods, \(m) acc %in% as.character(tops[[m]]))
 
@@ -740,7 +738,7 @@ tab_union |> web_table(caption = "Accessions in the top 10 % of at least one met
 
 ```{r}
 #| label: top14-methods
-#| echo: false
+#| echo: true
 vars_imp <- c("PCC", "PD", "GH", "PS")
 lab_imp  <- c(PCC = "Grain (pericarp) color", PD = "Panicle density",
               GH = "Growth habit", PS = "Panicle shape")
@@ -778,7 +776,7 @@ writexl::write_xlsx(list(Quant_Quali = tab_quali), "files/Table-selected.xlsx")
 
 ```{r}
 #| label: table3-final
-#| echo: false
+#| echo: true
 table3 <- top14 |>
   dplyr::select(Accession, N = N_methods,
                 dplyr::all_of(methods), dplyr::all_of(vars4)) |>
@@ -790,7 +788,7 @@ writexl::write_xlsx(list(Table3 = table3), "manuscript/Table-3.xlsx")
 
 ```{r}
 #| label: fig-profile
-#| echo: false
+#| echo: true
 pal <- c(PCC = "#D9A441", PD = "#2166AC", GH = "#4D9221", PS = "#B2182B")
 
 mk_panel <- function(v) {
@@ -832,7 +830,7 @@ ggsave("files/Figure_1.jpg", p_prof, width = 11, height = 7.5,
 
 ```{r}
 #| label: excel
-#| echo: false
+#| echo: true
 ## Supplementary Excel
 dir.create("manuscript", showWarnings = FALSE)
 
@@ -859,7 +857,7 @@ writexl::write_xlsx(sheets, "files/Table-3.xlsx")
 
 Qualitative descriptors (28, acronyms as column names) and quantitative BLUEs (13) for the 144 accessions.
 
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 quali_fin <- quali |>
   dplyr::mutate(geno = as.character(geno)) |>
   dplyr::left_join(
